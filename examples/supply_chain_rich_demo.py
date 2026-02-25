@@ -37,6 +37,34 @@ Supply Chain Rich Demo — 扩展的供应链延迟与惩罚计算
    - 公式：max(0, delay_impact_days) * unit_price * quantity * 0.01
    - 含义：仅对延误（delay_impact_days > 0）计罚；按「延误天数 × 单价 × 数量 × 费率」估算惩罚成本，
      其中 0.01 为示例费率（如每日万分之百或 1% 的惩罚系数）。
+
+----------------------------------------------------------------------
+依赖优先级的计算（同层多节点时，priority 小的先执行）
+----------------------------------------------------------------------
+
+7. 延迟严重程度 (delay_severity) — Shipment，priority=1
+   - 公式：1 if delay_days > 10 else 0
+   - 含义：延迟超过 10 天记为严重（1），否则为 0。与 delay_notification_flag 同层依赖 delay_days，
+     靠 priority 决定先算 severity 再算 notification。
+
+8. 延迟通知标志 (delay_notification_flag) — Shipment，priority=2
+   - 公式：1 if delay_days > 0 else 0
+   - 含义：只要延迟就需通知（1），否则 0。与 delay_severity 同层，priority=2 保证在 severity 之后执行。
+
+9. 发运风险分 (risk_score) — Shipment，priority=3
+   - 公式：delay_severity + delay_notification_flag
+   - 含义：汇总两个标志，需在二者都算完后执行，故 priority=3。
+
+10. 产品风险等级 (risk_level) — Product，priority=1
+    - 公式：1 if delay_impact_days > 5 else 0
+    - 含义：对客户延误超过 5 天记为高风险（1）。与 delay_penalty 同层依赖 delay_impact_days，
+      靠 priority 先算 risk_level 再算 delay_penalty。
+
+11. 延迟惩罚 (delay_penalty) — Product，priority=2（见上，与 risk_level 同层）
+
+12. 总成本 (total_cost) — Product，priority=3
+    - 公式：delay_penalty + risk_level * 1000
+    - 含义：惩罚金额加上风险加价（高风险固定加 1000）。必须在 delay_penalty 与 risk_level 都算完后执行。
 """
 
 import asyncio
@@ -61,6 +89,7 @@ from domain.services import (
     ComputationGraphExecutor,
     ScenarioRunResult,
     WhatIfSimulator,
+    Neo4jGraphManager
 )
 
 
@@ -68,6 +97,13 @@ class _MockNeo4jManager:
     """本 demo 不连接 Neo4j，仅占位。"""
     pass
 
+# ============================================================================
+# Configuration
+# ============================================================================
+
+NEO4J_URI = "bolt://localhost:7687"
+NEO4J_USER = "neo4j"
+NEO4J_PASSWORD = "123456789"
 
 # ============================================================================
 # Display
@@ -110,14 +146,23 @@ def build_rich_supply_chain_graph() -> ComputationGraph:
     unit_price_in = InputSpec("property", "Product", "unit_price")
     quantity_in = InputSpec("property", "Product", "quantity")
     delay_impact_in = InputSpec("property", "Product", "delay_impact_days")
+    delay_severity_in = InputSpec("property", "Shipment", "delay_severity")
+    delay_notification_in = InputSpec("property", "Shipment", "delay_notification_flag")
+    risk_level_in = InputSpec("property", "Product", "risk_level")
+    delay_penalty_in = InputSpec("property", "Product", "delay_penalty")
 
     # OutputSpecs
     effective_delivery_out = OutputSpec("property", "Shipment", "effective_delivery_days")
     delay_days_out = OutputSpec("property", "Shipment", "delay_days")
+    delay_severity_out = OutputSpec("property", "Shipment", "delay_severity")
+    delay_notification_out = OutputSpec("property", "Shipment", "delay_notification_flag")
+    risk_score_out = OutputSpec("property", "Shipment", "risk_score")
     actual_start_out = OutputSpec("property", "ProductionPlan", "actual_start_days")
     production_ready_out = OutputSpec("property", "Product", "production_ready_days")
     delay_impact_out = OutputSpec("property", "Product", "delay_impact_days")
+    risk_level_out = OutputSpec("property", "Product", "risk_level")
     delay_penalty_out = OutputSpec("property", "Product", "delay_penalty")
+    total_cost_out = OutputSpec("property", "Product", "total_cost")
 
     # Computation nodes（含义见文件顶部「计算逻辑含义」）
     # 1. 有效交付日 = 实际到货日 + 缓冲天数（下游按此日推算延迟）
@@ -175,7 +220,7 @@ def build_rich_supply_chain_graph() -> ComputationGraph:
         engine=ComputationEngine.PYTHON,
         priority=0,
     )
-    # 6. 延迟惩罚 = 仅对延误部分：延误天数 × 单价 × 数量 × 费率（示例 0.01）
+    # 6. 延迟惩罚 = 仅对延误部分：延误天数 × 单价 × 数量 × 费率（示例 0.01）；priority=2 与 risk_level 同层
     calc_delay_penalty = ComputationNode(
         id="calc_delay_penalty",
         name="delay_penalty",
@@ -184,7 +229,62 @@ def build_rich_supply_chain_graph() -> ComputationGraph:
         outputs=(delay_penalty_out,),
         code="max(0, delay_impact_days) * unit_price * quantity * 0.01",
         engine=ComputationEngine.PYTHON,
+        priority=2,
+    )
+    # 7. 延迟严重程度（>10 天为 1）；与 8 同层依赖 delay_days，priority 小先执行
+    calc_delay_severity = ComputationNode(
+        id="calc_delay_severity",
+        name="delay_severity",
+        level=ComputationLevel.PROPERTY,
+        inputs=(delay_days_in,),
+        outputs=(delay_severity_out,),
+        code="1 if delay_days > 10 else 0",
+        engine=ComputationEngine.PYTHON,
         priority=1,
+    )
+    # 8. 延迟通知标志（>0 天为 1）；priority=2
+    calc_delay_notification = ComputationNode(
+        id="calc_delay_notification",
+        name="delay_notification_flag",
+        level=ComputationLevel.PROPERTY,
+        inputs=(delay_days_in,),
+        outputs=(delay_notification_out,),
+        code="1 if delay_days > 0 else 0",
+        engine=ComputationEngine.PYTHON,
+        priority=2,
+    )
+    # 9. 发运风险分 = severity + notification；priority=3 必须在 7、8 之后
+    calc_risk_score = ComputationNode(
+        id="calc_risk_score",
+        name="risk_score",
+        level=ComputationLevel.PROPERTY,
+        inputs=(delay_severity_in, delay_notification_in),
+        outputs=(risk_score_out,),
+        code="delay_severity + delay_notification_flag",
+        engine=ComputationEngine.PYTHON,
+        priority=3,
+    )
+    # 10. 产品风险等级（delay_impact_days>5 为 1）；与 delay_penalty 同层，priority=1
+    calc_risk_level = ComputationNode(
+        id="calc_risk_level",
+        name="risk_level",
+        level=ComputationLevel.PROPERTY,
+        inputs=(delay_impact_in,),
+        outputs=(risk_level_out,),
+        code="1 if delay_impact_days > 5 else 0",
+        engine=ComputationEngine.PYTHON,
+        priority=1,
+    )
+    # 11. 总成本 = delay_penalty + risk_level*1000；priority=3 必须在 delay_penalty、risk_level 之后
+    calc_total_cost = ComputationNode(
+        id="calc_total_cost",
+        name="total_cost",
+        level=ComputationLevel.PROPERTY,
+        inputs=(delay_penalty_in, risk_level_in),
+        outputs=(total_cost_out,),
+        code="delay_penalty + risk_level * 1000",
+        engine=ComputationEngine.PYTHON,
+        priority=3,
     )
 
     # Relationships
@@ -227,11 +327,39 @@ def build_rich_supply_chain_graph() -> ComputationGraph:
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=quantity_in),
         ComputationRelationship("r_penalty_to_prod", "calc_delay_penalty", "product_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=delay_penalty_out),
+        # 依赖优先级的 Shipment 节点：delay_severity(1), delay_notification(2), risk_score(3)
+        ComputationRelationship("r_delay_to_severity", "shipment_001", "calc_delay_severity",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_days_in),
+        ComputationRelationship("r_severity_to_ship", "calc_delay_severity", "shipment_001",
+            "out", ComputationRelationType.OUTPUT_TO, "property", data_output=delay_severity_out),
+        ComputationRelationship("r_delay_to_notif", "shipment_001", "calc_delay_notification",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_days_in),
+        ComputationRelationship("r_notif_to_ship", "calc_delay_notification", "shipment_001",
+            "out", ComputationRelationType.OUTPUT_TO, "property", data_output=delay_notification_out),
+        ComputationRelationship("r_severity_to_risk", "shipment_001", "calc_risk_score",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_severity_in),
+        ComputationRelationship("r_notif_to_risk", "shipment_001", "calc_risk_score",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_notification_in),
+        ComputationRelationship("r_risk_to_ship", "calc_risk_score", "shipment_001",
+            "out", ComputationRelationType.OUTPUT_TO, "property", data_output=risk_score_out),
+        # 依赖优先级的 Product 节点：risk_level(1), delay_penalty(2), total_cost(3)
+        ComputationRelationship("r_impact_to_risk_level", "product_001", "calc_risk_level",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_impact_in),
+        ComputationRelationship("r_risk_level_to_prod", "calc_risk_level", "product_001",
+            "out", ComputationRelationType.OUTPUT_TO, "property", data_output=risk_level_out),
+        ComputationRelationship("r_penalty_to_total", "product_001", "calc_total_cost",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_penalty_in),
+        ComputationRelationship("r_risk_level_to_total", "product_001", "calc_total_cost",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=risk_level_in),
+        ComputationRelationship("r_total_to_prod", "calc_total_cost", "product_001",
+            "out", ComputationRelationType.OUTPUT_TO, "property", data_output=total_cost_out),
     ]
 
     graph = ComputationGraph(id="supply_chain_rich")
     for node in [calc_effective_delivery, calc_delay_days, calc_actual_start,
-                 calc_production_ready, calc_delay_impact, calc_delay_penalty]:
+                 calc_production_ready, calc_delay_impact, calc_delay_penalty,
+                 calc_delay_severity, calc_delay_notification, calc_risk_score,
+                 calc_risk_level, calc_total_cost]:
         graph = graph.add_computation_node(node)
     for r in rels:
         graph = graph.add_computation_relationship(r)
@@ -275,6 +403,7 @@ def build_rich_node_data() -> Dict[str, Dict]:
 async def main() -> None:
     print_header("Supply Chain Rich Demo — 扩展运算与数据")
     print("运算链: effective_delivery -> delay_days -> actual_start -> production_ready -> delay_impact -> delay_penalty")
+    print("       + 依赖优先级的节点: Shipment(delay_severity, delay_notification_flag, risk_score); Product(risk_level, total_cost)")
     print("数据: Shipment(buffer_days), Product(promised_delivery_days, unit_price, quantity)")
     print()
 
@@ -286,6 +415,28 @@ async def main() -> None:
     executor = ComputationGraphExecutor(graph, node_data_map)
     executor.execute(verbose=True)
     executor.print_node_data("基线结果")
+    print()
+    
+    # 在 Neo4j 中可视化：同步数据节点 + 计算节点 + 关系，并输出可视化 Cypher
+    neo4j_manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    await neo4j_manager.connect()
+    print("Connected to Neo4j")
+    print()
+
+    print_header("Step 2: 同步数据节点到 Neo4j（供计算图可视化）")
+    await neo4j_manager.ensure_data_nodes_from_map(node_data_map, graph_id=graph.id)
+    print(f"DataNodes MERGE 完成: {list(node_data_map.keys())}")
+    print()
+
+    print_header("Step 3: Create Computation Nodes in Neo4j")
+    comp_node_id_map = await neo4j_manager.create_computation_nodes(graph)
+    print(f"Created {len(comp_node_id_map)} computation nodes")
+    print()
+
+    print_header("Step 4: Create Relationships in Neo4j")
+    await neo4j_manager.create_relationships(graph)
+    print(f"Created {len(graph.computation_relationships)} relationships")
+    neo4j_manager.print_visualization_instructions(graph)
     print()
 
     simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager())
@@ -300,7 +451,8 @@ async def main() -> None:
     s1 = r1.scenario
     print(f"  关键结果: production_ready_days={s1.get('product_001', {}).get('production_ready_days')}, "
           f"delay_impact_days={s1.get('product_001', {}).get('delay_impact_days')}, "
-          f"delay_penalty={s1.get('product_001', {}).get('delay_penalty')}")
+          f"delay_penalty={s1.get('product_001', {}).get('delay_penalty')}, "
+          f"risk_level={s1.get('product_001', {}).get('risk_level')}, total_cost={s1.get('product_001', {}).get('total_cost')}")
     print()
 
     # Scenario 2: 增加缓冲天数
@@ -320,7 +472,8 @@ async def main() -> None:
     )
     print_diff_summary(r3, "承诺日提前")
     print(f"  关键结果: delay_impact_days={r3.scenario.get('product_001', {}).get('delay_impact_days')}, "
-          f"delay_penalty={r3.scenario.get('product_001', {}).get('delay_penalty')}")
+          f"delay_penalty={r3.scenario.get('product_001', {}).get('delay_penalty')}, "
+          f"risk_level={r3.scenario.get('product_001', {}).get('risk_level')}, total_cost={r3.scenario.get('product_001', {}).get('total_cost')}")
     print()
 
     # Scenario 4: 多属性同时变化
@@ -335,8 +488,9 @@ async def main() -> None:
     print_diff_summary(r4, "多属性")
     print()
 
+    await neo4j_manager.disconnect()
     print_header("Demo 完成")
-    print("Executor 状态已恢复为基线，可继续执行或写回 Neo4j。")
+    print("Executor 状态已恢复为基线。计算图 + 数据节点已写入 Neo4j，可在 Browser 中执行上述 Cypher 查看。")
 
 
 if __name__ == "__main__":

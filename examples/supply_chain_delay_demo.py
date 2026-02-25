@@ -220,6 +220,7 @@ async def main():
         # Step 4: Query graph structure from Neo4j
         print_header("Step 4: Query Graph Structure from Neo4j")
         await neo4j_manager.print_graph_structure()
+        neo4j_manager.print_visualization_instructions(graph)
         print()
 
         # Step 5: Execute computations

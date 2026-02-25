@@ -123,6 +123,45 @@ class Neo4jGraphManager:
             )
         return node_data_map
 
+    async def ensure_data_nodes_from_map(
+        self,
+        node_data_map: Dict[str, Dict],
+        graph_id: Optional[str] = None,
+    ) -> None:
+        """
+        Create or update DataNode nodes in Neo4j from a node_data_map (e.g. in-memory data).
+        Use when the graph is not loaded from Neo4j but you want to visualize data + computation in Neo4j.
+        Optionally set graph_id on each DataNode for filtering.
+        """
+        if not self.data_provider:
+            return
+        for uuid, props in node_data_map.items():
+            p = {**props, "uuid": uuid}
+            if graph_id is not None:
+                p["graph_id"] = graph_id
+            await self.data_provider.merge_data_node(uuid, p)
+
+    def get_visualization_cypher(self, graph: ComputationGraph) -> Tuple[str, Dict]:
+        """
+        Return a Cypher query and params to run in Neo4j Browser to visualize
+        the full computation graph (DataNodes + ComputationNodes + relationships).
+
+        Returns:
+            (query_string, params) e.g. for session.run(query, **params) or paste in Browser.
+        """
+        data_uuids = list(graph.get_data_node_ids())
+        query = """
+        MATCH (n)
+        WHERE (n:DataNode AND n.uuid IN $data_uuids)
+           OR (n:ComputationNode AND n.graph_id = $graph_id)
+        WITH collect(n) AS nodes
+        UNWIND nodes AS n
+        UNWIND nodes AS m
+        MATCH (n)-[r]-(m)
+        RETURN n, r, m
+        """
+        return query.strip(), {"data_uuids": data_uuids, "graph_id": graph.id}
+
     async def create_computation_nodes(self, graph: ComputationGraph) -> Dict[str, str]:
         """Create computation nodes in Neo4j
 
@@ -229,3 +268,25 @@ class Neo4jGraphManager:
                 source_info = f"{props.get('name', '')} ({record['source_type']})"
                 target_info = f"{props.get('name', '')} ({record['target_type']})"
                 print(f"  - {source_info} -> {target_info} [{record['rel_type']}]")
+
+    def print_visualization_instructions(self, graph: ComputationGraph) -> None:
+        """Print Cypher and instructions to visualize the computation graph + data nodes in Neo4j Browser."""
+        data_uuids = list(graph.get_data_node_ids())
+        graph_id = graph.id
+        # 可直接粘贴到 Neo4j Browser 的查询（参数内联）
+        data_uuids_cypher = ", ".join(repr(u) for u in data_uuids)
+        query_paste = f"""
+MATCH (n)
+WHERE (n:DataNode AND n.uuid IN [{data_uuids_cypher}])
+   OR (n:ComputationNode AND n.graph_id = {repr(graph_id)})
+WITH collect(n) AS nodes
+UNWIND nodes AS n
+UNWIND nodes AS m
+MATCH (n)-[r]-(m)
+RETURN n, r, m
+""".strip()
+        print("\n[Neo4j 可视化 — 计算图 + 数据节点]")
+        print("在 Neo4j Browser (http://localhost:7474) 中粘贴以下 Cypher 查看完整图：")
+        print()
+        print(query_paste)
+        print()
