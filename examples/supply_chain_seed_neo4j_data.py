@@ -15,8 +15,11 @@ Neo4j 里存的是场景相关的节点类型（如 Shipment、ProductionPlan、
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
@@ -61,11 +64,12 @@ async def clear_nodes_by_uuids(manager: Neo4jGraphManager, uuids: list):
                 "MATCH (n) WHERE n.uuid = $uid DETACH DELETE n",
                 uid=uid,
             )
-    print(f"Cleared nodes with uuid in {uuids}")
+    logger.info("Cleared nodes with uuid in %s", uuids)
 
 
 async def main():
     import argparse
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(
         description="Pre-create business nodes (Shipment, ProductionPlan, Product) in Neo4j for supply_chain_delay_demo"
     )
@@ -79,22 +83,22 @@ async def main():
     manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     try:
         await manager.connect()
-        print("Connected to Neo4j")
+        logger.info("Connected to Neo4j")
 
         if args.clear:
             await clear_nodes_by_uuids(manager, list(SEED_SPECS.keys()))
 
         mapping = await manager.create_business_nodes(SEED_SPECS)
-        print(f"Created {len(mapping)} business nodes:")
+        logger.info("Created %s business nodes:", len(mapping))
         for node_uuid, neo4j_id in mapping.items():
             label = SEED_SPECS[node_uuid].get("label", "?")
-            print(f"  {node_uuid} ({label}) -> {neo4j_id}")
+            logger.info("  %s (%s) -> %s", node_uuid, label, neo4j_id)
 
         await manager.disconnect()
-        print("Done. Run: python examples/supply_chain_delay_demo.py")
+        logger.info("Done. Run: python examples/supply_chain_delay_demo.py")
     except Exception as e:
-        print(f"Error: {e}")
-        print("Tip: Start Neo4j with: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/123456789 neo4j")
+        logger.error("Error: %s", e)
+        logger.info("Tip: Start Neo4j with: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/123456789 neo4j")
         raise
 
 

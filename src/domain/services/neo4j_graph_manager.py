@@ -4,7 +4,10 @@ Neo4j Graph Manager
 Manages Neo4j graph operations for computation graphs.
 """
 
+import logging
 from typing import Dict, Iterable, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from ..models import (
     ComputationRelationType,
@@ -90,7 +93,7 @@ class Neo4jGraphManager:
             # Read from business node (Order, Invoice, etc.) by uuid
             result = await self.data_provider.get_data_node_by_uuid(uuid)
             if result is None:
-                print(f"Warning: Node with uuid '{uuid}' not found in Neo4j, skipping.")
+                logger.warning("Node with uuid '%s' not found in Neo4j, skipping.", uuid)
                 continue
             props = result
             # Materialize into DataNode in Neo4j (MERGE by uuid); computation graph links to DataNode only
@@ -263,22 +266,22 @@ class Neo4jGraphManager:
             return
 
         async with driver.session() as session:
-            print("\n[DataNodes (from business node attributes; linked to computation graph)]")
+            logger.info("[DataNodes (from business node attributes; linked to computation graph)]")
             query = "MATCH (n:DataNode) RETURN elementId(n) AS id, n ORDER BY n.uuid"
             result = await session.run(query)
             async for record in result:
                 props = dict(record["n"])
-                print(f"  - DataNode ID: {record['id']} uuid={props.get('uuid', '?')}")
+                logger.info("  - DataNode ID: %s uuid=%s", record['id'], props.get('uuid', '?'))
                 for key, value in props.items():
-                    print(f"      {key}: {value}")
+                    logger.info("      %s: %s", key, value)
 
-            print("\n[Computation Nodes]")
+            logger.info("[Computation Nodes]")
             query = "MATCH (n:ComputationNode) RETURN elementId(n) AS id, n.name, n.code ORDER BY n.name"
             result = await session.run(query)
             async for record in result:
-                print(f"  - {record['n.name']} (ID: {record['id']}): {record['n.code']}")
+                logger.info("  - %s (ID: %s): %s", record['n.name'], record['id'], record['n.code'])
 
-            print("\n[Relationships]")
+            logger.info("[Relationships]")
             query = """
                 MATCH (source)-[r]->(target)
                 RETURN type(r) AS rel_type, properties(r) AS rel_props,
@@ -291,7 +294,7 @@ class Neo4jGraphManager:
                 props = record["rel_props"]
                 source_info = f"{props.get('name', '')} ({record['source_type']})"
                 target_info = f"{props.get('name', '')} ({record['target_type']})"
-                print(f"  - {source_info} -> {target_info} [{record['rel_type']}]")
+                logger.info("  - %s -> %s [%s]", source_info, target_info, record['rel_type'])
 
     def print_visualization_instructions(self, graph: ComputationGraph) -> None:
         """Print Cypher and instructions to visualize the computation graph + data nodes in Neo4j Browser."""
@@ -309,8 +312,6 @@ UNWIND nodes AS m
 MATCH (n)-[r]-(m)
 RETURN n, r, m
 """.strip()
-        print("\n[Neo4j 可视化 — 计算图 + 数据节点]")
-        print("在 Neo4j Browser (http://localhost:7474) 中粘贴以下 Cypher 查看完整图：")
-        print()
-        print(query_paste)
-        print()
+        logger.info("[Neo4j 可视化 — 计算图 + 数据节点]")
+        logger.info("在 Neo4j Browser (http://localhost:7474) 中粘贴以下 Cypher 查看完整图：")
+        logger.info("%s", query_paste)

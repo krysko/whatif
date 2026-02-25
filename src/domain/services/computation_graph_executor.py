@@ -4,9 +4,12 @@ Computation Graph Executor
 Handles computation graph execution using NetworkX.
 """
 
-from typing import Optional, Dict, List
 import copy
+import logging
+from typing import Optional, Dict, List
 import networkx as nx
+
+logger = logging.getLogger(__name__)
 
 from ..models import (
     ComputationRelationType,
@@ -92,7 +95,7 @@ class ComputationGraphExecutor:
             key = lambda n: (self.G.nodes[n].get("priority", 0), n)
             return list(nx.lexicographical_topological_sort(dep_graph, key=key))
         except nx.NetworkXError as e:
-            print(f"Error: Graph contains a cycle - {e}")
+            logger.error("Graph contains a cycle: %s", e)
             return None
 
     def _execute_node(self, node_id: str, verbose: bool = True) -> Optional[float]:
@@ -103,8 +106,8 @@ class ComputationGraphExecutor:
             return None
 
         if verbose:
-            print(f"Executing: {node_id} ({node_data.get('name')})")
-            print(f"  Code: {node_data.get('code')}")
+            logger.info("Executing: %s (%s)", node_id, node_data.get('name'))
+            logger.info("  Code: %s", node_data.get('code'))
 
         # Gather input variables from predecessors
         variables = {}
@@ -116,7 +119,7 @@ class ComputationGraphExecutor:
         try:
             result = eval(code, {}, variables)
             if verbose:
-                print(f"  Result: {result}")
+                logger.info("  Result: %s", result)
 
             # Update successors via OUTPUT_TO edges
             for successor in self.G.successors(node_id):
@@ -126,11 +129,11 @@ class ComputationGraphExecutor:
                     if property_name:
                         self.G.nodes[successor][property_name] = result
                         if verbose:
-                            print(f"  -> Updated {successor}.{property_name} = {result}")
+                            logger.info("  -> Updated %s.%s = %s", successor, property_name, result)
             return result
         except Exception as e:
             if verbose:
-                print(f"  Error: {e}")
+                logger.error("  Error: %s", e)
             return None
 
     def execute(self, verbose: bool = True) -> bool:
@@ -140,13 +143,12 @@ class ComputationGraphExecutor:
             return False
 
         if verbose:
-            print(f"Execution order: {' -> '.join(order)}")
-            print()
+            logger.info("Execution order: %s", " -> ".join(order))
 
         for node_id in order:
             self._execute_node(node_id, verbose)
             if verbose and self.G.nodes[node_id].get("is_computation"):
-                print()
+                logger.info("")
 
         return True
 
@@ -187,13 +189,13 @@ class ComputationGraphExecutor:
         }
 
     def print_node_data(self, title: str = "Current Node Data"):
-        """Print current data for all nodes"""
-        print(f"\n{title}")
-        print("=" * 50)
+        """Log current data for all nodes"""
+        logger.info("%s", title)
+        logger.info("=" * 50)
 
         for node_id, data in self.G.nodes(data=True):
             if not data.get("is_computation"):
-                print(f"\n[{node_id}]")
+                logger.info("[%s]", node_id)
                 for key, value in data.items():
                     if key != "is_computation":
-                        print(f"  {key}: {value}")
+                        logger.info("  %s: %s", key, value)

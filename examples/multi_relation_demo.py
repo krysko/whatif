@@ -6,10 +6,13 @@ using multiple relationship types (DEPENDS_ON and OUTPUT_TO).
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 import networkx as nx
 import pickle
+
+logger = logging.getLogger(__name__)
 
 # Add src to Python path
 src_path = Path(__file__).parent.parent / "src"
@@ -213,11 +216,11 @@ def execute_networkx_graph(G: nx.DiGraph, dep_graph: nx.DiGraph, verbose: bool =
         key = lambda n: (G.nodes[n].get("priority", 0), n)
         order = list(nx.lexicographical_topological_sort(dep_graph, key=key))
         if verbose:
-            print(f"Execution order: {' -> '.join(order)}")
-            print()
+            logger.info("Execution order: %s", " -> ".join(order))
+            logger.info("")
     except nx.NetworkXError as e:
         if verbose:
-            print(f"Error: Graph contains a cycle - {e}")
+            logger.error("Graph contains a cycle: %s", e)
         return None
 
     for node_id in order:
@@ -225,8 +228,8 @@ def execute_networkx_graph(G: nx.DiGraph, dep_graph: nx.DiGraph, verbose: bool =
 
         if node_data.get("is_computation"):
             if verbose:
-                print(f"Executing: {node_id} ({node_data.get('name')})")
-                print(f"  Code: {node_data.get('code')}")
+                logger.info("Executing: %s (%s)", node_id, node_data.get('name'))
+                logger.info("  Code: %s", node_data.get('code'))
 
             # Gather input variables from predecessors
             variables = {}
@@ -238,7 +241,7 @@ def execute_networkx_graph(G: nx.DiGraph, dep_graph: nx.DiGraph, verbose: bool =
             try:
                 result = eval(code, {}, variables)
                 if verbose:
-                    print(f"  Result: {result}")
+                    logger.info("  Result: %s", result)
 
                 # Update successors via OUTPUT_TO edges
                 for successor in G.successors(node_id):
@@ -248,13 +251,13 @@ def execute_networkx_graph(G: nx.DiGraph, dep_graph: nx.DiGraph, verbose: bool =
                         if property_name:
                             G.nodes[successor][property_name] = result
                             if verbose:
-                                print(f"  -> Updated {successor}.{property_name} = {result}")
+                                logger.info("  -> Updated %s.%s = %s", successor, property_name, result)
             except Exception as e:
                 if verbose:
-                    print(f"  Error: {e}")
+                    logger.error("  Error: %s", e)
 
             if verbose:
-                print()
+                logger.info("")
 
     return order
 
@@ -331,57 +334,57 @@ async def verify_node_data(driver, node_id: str) -> dict | None:
 # ============================================================================
 
 def print_header(title: str, width: int = 80):
-    """Print section header"""
-    print("=" * width)
-    print(title)
-    print("=" * width)
-    print()
+    """Log section header"""
+    logger.info("=" * width)
+    logger.info(title)
+    logger.info("=" * width)
+    logger.info("")
 
 
 def print_separator(char: str = "-", count: int = 40):
-    """Print section separator"""
-    print(char * count)
+    """Log section separator"""
+    logger.info(char * count)
 
 
 def print_node_data(node_data: dict, indent: str = "  "):
-    """Print node data properties"""
+    """Log node data properties"""
     for key, value in node_data.items():
-        print(f"{indent}- {key}: {value}")
+        logger.info("%s- %s: %s", indent, key, value)
 
 
 def print_product_summary(data: dict):
-    """Print product summary with inputs and computed outputs"""
-    print(f"Product: {data.get('name', 'Unknown')}")
-    print()
-    print("Original Inputs:")
-    print(f"  - Price: {data.get('price', 'N/A')}")
-    print(f"  - Quantity: {data.get('quantity', 'N/A')}")
-    print(f"  - Discount Rate: {data.get('discount_rate', 'N/A')}")
-    print(f"  - Tax Rate: {data.get('tax_rate', 'N/A')}")
-    print()
-    print("Computed Outputs:")
-    print(f"  - Total Output: {data.get('total_output', 'N/A')}")
-    print(f"  - Price After Discount: {data.get('price_after_discount', 'N/A')}")
-    print(f"  - Final Price: {data.get('final_price', 'N/A')}")
+    """Log product summary with inputs and computed outputs"""
+    logger.info("Product: %s", data.get('name', 'Unknown'))
+    logger.info("")
+    logger.info("Original Inputs:")
+    logger.info("  - Price: %s", data.get('price', 'N/A'))
+    logger.info("  - Quantity: %s", data.get('quantity', 'N/A'))
+    logger.info("  - Discount Rate: %s", data.get('discount_rate', 'N/A'))
+    logger.info("  - Tax Rate: %s", data.get('tax_rate', 'N/A'))
+    logger.info("")
+    logger.info("Computed Outputs:")
+    logger.info("  - Total Output: %s", data.get('total_output', 'N/A'))
+    logger.info("  - Price After Discount: %s", data.get('price_after_discount', 'N/A'))
+    logger.info("  - Final Price: %s", data.get('final_price', 'N/A'))
 
 
 def print_graph_structure(G: nx.DiGraph, data_node_id: str = PRODUCT_NODE_ID):
-    """Print NetworkX graph structure"""
-    print("\nData Node:")
+    """Log NetworkX graph structure"""
+    logger.info("Data Node:")
     node_data = G.nodes[data_node_id]
-    print(f"  - {data_node_id}")
+    logger.info("  - %s", data_node_id)
     for key, value in node_data.items():
-        print(f"    {key}: {value}")
+        logger.info("    %s: %s", key, value)
 
-    print("\nComputation Nodes:")
+    logger.info("Computation Nodes:")
     for node_id, data in G.nodes(data=True):
         if data.get("is_computation"):
-            print(f"  - {node_id} ({data.get('name')})")
-            print(f"    Code: {data.get('code')}")
+            logger.info("  - %s (%s)", node_id, data.get('name'))
+            logger.info("    Code: %s", data.get('code'))
 
-    print("\nEdges:")
+    logger.info("Edges:")
     for source, target, data in G.edges(data=True):
-        print(f"  - {source} -> {target} ({data.get('relation_type')})")
+        logger.info("  - %s -> %s (%s)", source, target, data.get('relation_type'))
 
 
 # ============================================================================
@@ -390,13 +393,14 @@ def print_graph_structure(G: nx.DiGraph, data_node_id: str = PRODUCT_NODE_ID):
 
 async def demo_with_networkx():
     """Demo using NetworkX for graph computation with topological sort, reading from Neo4j"""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     print_header("NetworkX-Based Computation Graph Demo (Neo4j Read-Only)")
-    print(get_connection_info())
+    logger.info("%s", get_connection_info())
 
     try:
         data_provider = Neo4jDataProvider(uri=NEO4J_URI, user=NEO4J_USER, password=NEO4J_PASSWORD)
-        print("Connecting to Neo4j...")
-        print()
+        logger.info("Connecting to Neo4j...")
+        logger.info("")
 
         # Step 1: Read data from Neo4j
         print_header("Step 1: Read Data from Neo4j")
@@ -405,29 +409,29 @@ async def demo_with_networkx():
         product_neo4j_id, product_data = await get_or_create_product_node(
             data_provider, node_data_map[PRODUCT_NODE_ID]
         )
-        print(f"{'Found existing' if product_data else 'Created new'} product node with ID: {product_neo4j_id}")
-        print()
-        print("Product data:")
+        logger.info("%s product node with ID: %s", "Found existing" if product_data else "Created new", product_neo4j_id)
+        logger.info("")
+        logger.info("Product data:")
         print_node_data(product_data)
-        print()
+        logger.info("")
 
         await data_provider.close()
-        print("Neo4j connection closed (computations will run in memory)")
-        print()
+        logger.info("Neo4j connection closed (computations will run in memory)")
+        logger.info("")
 
         # Step 2: Build NetworkX graph
         print_header("Step 2: Build NetworkX Graph")
         print_separator()
         G, dep_graph = build_networkx_graph(graph, {PRODUCT_NODE_ID: product_data})
-        print(f"  Added {len(graph.computation_nodes)} computation nodes")
-        print(f"  Added {len(graph.computation_relationships)} edges")
-        print()
+        logger.info("  Added %s computation nodes", len(graph.computation_nodes))
+        logger.info("  Added %s edges", len(graph.computation_relationships))
+        logger.info("")
 
         # Step 3: Display graph structure
         print_header("Step 3: Display Graph Structure")
         print_separator()
         print_graph_structure(G)
-        print()
+        logger.info("")
 
         # Step 4: Execute computations
         print_header("Step 4: Execute Computations (Topological Sort)")
@@ -437,11 +441,11 @@ async def demo_with_networkx():
 
         # Step 5: Display results
         print_header("Step 5: Computed Results")
-        print("Computed output values:")
+        logger.info("Computed output values:")
         for prop in OUTPUT_PROPERTIES:
-            print(f"  - {prop.replace('_', ' ').title()}: {G.nodes[PRODUCT_NODE_ID].get(prop, 'N/A')}")
-        print()
-        
+            logger.info("  - %s: %s", prop.replace('_', ' ').title(), G.nodes[PRODUCT_NODE_ID].get(prop, 'N/A'))
+        logger.info("")
+
         with open("graph.pkl", "wb") as f:
             pickle.dump(G, f)
 
@@ -451,41 +455,41 @@ async def demo_with_networkx():
 
         # Step 6: What-If Simulation 1 - Price increase
         print_header("Step 6: What-If Simulation - Price Increase")
-        print("\n--- What-If: What if price increases from 100.0 to 150.0? ---")
+        logger.info("--- What-If: What if price increases from 100.0 to 150.0? ---")
+        logger.info("")
 
         original_price = G.nodes[PRODUCT_NODE_ID]["price"]
         G.nodes[PRODUCT_NODE_ID]["price"] = 150.0
 
-        print()
         execute_networkx_graph(G, dep_graph, verbose=False)
 
-        print("New Computed Values:")
+        logger.info("New Computed Values:")
         for prop in OUTPUT_PROPERTIES:
-            print(f"  - {prop.replace('_', ' ').title()}: {G.nodes[PRODUCT_NODE_ID].get(prop, 'N/A')}")
-        print()
-    
+            logger.info("  - %s: %s", prop.replace('_', ' ').title(), G.nodes[PRODUCT_NODE_ID].get(prop, 'N/A'))
+        logger.info("")
+
         # Restore for next simulation
         G.nodes[PRODUCT_NODE_ID]["price"] = original_price
 
         # Step 7: What-If Simulation 2 - Quantity increase
         print_header("Step 7: What-If Simulation - Quantity Increase")
-        print("\n--- What-If: What if quantity increases from 2 to 10? ---")
+        logger.info("--- What-If: What if quantity increases from 2 to 10? ---")
+        logger.info("")
 
         original_quantity = G.nodes[PRODUCT_NODE_ID]["quantity"]
         G.nodes[PRODUCT_NODE_ID]["quantity"] = 10
 
-        print()
         execute_networkx_graph(G, dep_graph, verbose=False)
 
-        print("New Computed Values:")
+        logger.info("New Computed Values:")
         for prop in OUTPUT_PROPERTIES:
-            print(f"  - {prop.replace('_', ' ').title()}: {G.nodes[PRODUCT_NODE_ID].get(prop, 'N/A')}")
-        print()
+            logger.info("  - %s: %s", prop.replace('_', ' ').title(), G.nodes[PRODUCT_NODE_ID].get(prop, 'N/A'))
+        logger.info("")
 
     except Exception as e:
-        print(f"Error: {e}")
-        print("\nTip: Please make sure Neo4j database is running")
-        print("Start Neo4j: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/neo4j neo4j")
+        logger.error("Error: %s", e)
+        logger.info("Tip: Please make sure Neo4j database is running")
+        logger.info("Start Neo4j: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/neo4j neo4j")
 
 
 # ============================================================================
@@ -495,22 +499,26 @@ async def demo_with_networkx():
 async def main():
     """Main entry point: NetworkX-based computation graph with Neo4j read/write."""
     await demo_with_networkx()
-    print()
+    logger.info("")
     print_header("Demo completed!")
-    print("\nGraph structure:")
-    print("  Data Node: Product (iPhone 15 Pro)")
-    print("\nComputation Nodes:")
-    print("  - calc_total: price * quantity")
-    print("  - calc_discount: total_output * (1 - discount_rate)")
-    print("  - calc_tax: price_after_discount * (1 + tax_rate)")
-    print("\nRelationships (DEPENDS_ON: Data Node -> Computation Node):")
-    print("  - Product.price -> calc_total")
-    print("  - Product.quantity -> calc_total")
-    print("\nRelationships (OUTPUT_TO: Computation Node -> Data Node):")
-    print("  - calc_total -> Product.total_output")
-    print("  - calc_discount -> Product.price_after_discount")
-    print("  - calc_tax -> Product.final_price")
-    print("\nView graph in Neo4j Browser at: http://localhost:7474")
+    logger.info("Graph structure:")
+    logger.info("  Data Node: Product (iPhone 15 Pro)")
+    logger.info("")
+    logger.info("Computation Nodes:")
+    logger.info("  - calc_total: price * quantity")
+    logger.info("  - calc_discount: total_output * (1 - discount_rate)")
+    logger.info("  - calc_tax: price_after_discount * (1 + tax_rate)")
+    logger.info("")
+    logger.info("Relationships (DEPENDS_ON: Data Node -> Computation Node):")
+    logger.info("  - Product.price -> calc_total")
+    logger.info("  - Product.quantity -> calc_total")
+    logger.info("")
+    logger.info("Relationships (OUTPUT_TO: Computation Node -> Data Node):")
+    logger.info("  - calc_total -> Product.total_output")
+    logger.info("  - calc_discount -> Product.price_after_discount")
+    logger.info("  - calc_tax -> Product.final_price")
+    logger.info("")
+    logger.info("View graph in Neo4j Browser at: http://localhost:7474")
 
 
 if __name__ == "__main__":

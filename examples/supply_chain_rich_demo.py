@@ -67,10 +67,12 @@ Supply Chain Rich Demo — 扩展的供应链延迟与惩罚计算
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+logger = logging.getLogger(__name__)
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
@@ -109,18 +111,20 @@ NEO4J_PASSWORD = "123456789"
 # ============================================================================
 
 def print_header(title: str, width: int = 60) -> None:
-    print("=" * width)
-    print(title)
-    print("=" * width)
-    print()
+    logger.info("=" * width)
+    logger.info(title)
+    logger.info("=" * width)
+    logger.info("")
 
 
 def print_diff_summary(result: ScenarioRunResult, label: str) -> None:
-    print(f"  [{label}] 共 {len(result.diff)} 项变化:")
+    logger.info("  [%s] 共 %s 项变化:", label, len(result.diff))
     for d in result.diff[:10]:
-        print(f"    {d['node_id']}.{d['property_name']}: {d['baseline_value']} -> {d['scenario_value']}")
+        logger.info("    %s.%s: %s -> %s",
+                    d['node_id'], d['property_name'],
+                    d['baseline_value'], d['scenario_value'])
     if len(result.diff) > 10:
-        print(f"    ... 其余 {len(result.diff) - 10} 项")
+        logger.info("    ... 其余 %s 项", len(result.diff) - 10)
 
 
 # ============================================================================
@@ -403,11 +407,12 @@ def build_rich_node_data() -> Dict[str, Dict]:
 # ============================================================================
 
 async def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     print_header("Supply Chain Rich Demo — 扩展运算与数据")
-    print("运算链: effective_delivery -> delay_days -> actual_start -> production_ready -> delay_impact -> delay_penalty")
-    print("       + 依赖优先级的节点: Shipment(delay_severity, delay_notification_flag, risk_score); Product(risk_level, total_cost)")
-    print("数据: Shipment(buffer_days), Product(promised_delivery_days, unit_price, quantity)")
-    print()
+    logger.info("运算链: effective_delivery -> delay_days -> actual_start -> production_ready -> delay_impact -> delay_penalty")
+    logger.info("       + 依赖优先级的节点: Shipment(delay_severity, delay_notification_flag, risk_score); Product(risk_level, total_cost)")
+    logger.info("数据: Shipment(buffer_days), Product(promised_delivery_days, unit_price, quantity)")
+    logger.info("")
 
     graph = build_rich_supply_chain_graph()
     node_data_map = build_rich_node_data()
@@ -417,22 +422,23 @@ async def main() -> None:
     executor = ComputationGraphExecutor(graph, node_data_map)
     executor.execute(verbose=True)
     executor.print_node_data("基线结果")
-    print()
-    
+    logger.info("")
+
     # 在 Neo4j 中可视化：同步数据节点 + 计算节点 + 关系，并输出可视化 Cypher
     neo4j_manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     await neo4j_manager.connect()
-    print("Connected to Neo4j")
-    print()
+    logger.info("Connected to Neo4j")
+    logger.info("")
 
     print_header("Step 2: 同步数据节点、计算节点、计算关系到 Neo4j（一步完成）")
     await neo4j_manager.sync_graph_to_neo4j(graph, node_data_map=node_data_map)
-    print(f"Synced: {len(node_data_map)} data nodes, {len(graph.computation_nodes)} computation nodes, {len(graph.computation_relationships)} relationships")
+    logger.info("Synced: %s data nodes, %s computation nodes, %s relationships",
+                len(node_data_map), len(graph.computation_nodes), len(graph.computation_relationships))
     neo4j_manager.print_visualization_instructions(graph)
-    print()
+    logger.info("")
 
     simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager())
-    
+
     # Scenario 0: 交付延迟 1 天
     print_header("Step 0: What-If — 交付延迟 1 天")
     r0 = await simulator.run_scenario(
@@ -440,7 +446,7 @@ async def main() -> None:
         title="交付延迟 1 天",
     )
     print_diff_summary(r0, "交付延迟 1 天")
-    print()
+    logger.info("")
 
     # Scenario 1: 交付延迟 10 天
     print_header("Step 2: What-If — 物料交付延迟 10 天")
@@ -450,11 +456,11 @@ async def main() -> None:
     )
     print_diff_summary(r1, "交付延迟 10 天")
     s1 = r1.scenario
-    print(f"  关键结果: production_ready_days={s1.get('product_001', {}).get('production_ready_days')}, "
-          f"delay_impact_days={s1.get('product_001', {}).get('delay_impact_days')}, "
-          f"delay_penalty={s1.get('product_001', {}).get('delay_penalty')}, "
-          f"risk_level={s1.get('product_001', {}).get('risk_level')}, total_cost={s1.get('product_001', {}).get('total_cost')}")
-    print()
+    p1 = s1.get('product_001', {})
+    logger.info("  关键结果: production_ready_days=%s, delay_impact_days=%s, delay_penalty=%s, risk_level=%s, total_cost=%s",
+                p1.get('production_ready_days'), p1.get('delay_impact_days'), p1.get('delay_penalty'),
+                p1.get('risk_level'), p1.get('total_cost'))
+    logger.info("")
 
     # Scenario 2: 增加缓冲天数
     print_header("Step 3: What-If — 增加缓冲 3 天")
@@ -463,7 +469,7 @@ async def main() -> None:
         title="增加缓冲 3 天",
     )
     print_diff_summary(r2, "增加缓冲")
-    print()
+    logger.info("")
 
     # Scenario 3: 承诺交付日提前
     print_header("Step 4: What-If — 承诺交付日提前至 105 天")
@@ -472,10 +478,10 @@ async def main() -> None:
         title="承诺日提前",
     )
     print_diff_summary(r3, "承诺日提前")
-    print(f"  关键结果: delay_impact_days={r3.scenario.get('product_001', {}).get('delay_impact_days')}, "
-          f"delay_penalty={r3.scenario.get('product_001', {}).get('delay_penalty')}, "
-          f"risk_level={r3.scenario.get('product_001', {}).get('risk_level')}, total_cost={r3.scenario.get('product_001', {}).get('total_cost')}")
-    print()
+    p3 = r3.scenario.get('product_001', {})
+    logger.info("  关键结果: delay_impact_days=%s, delay_penalty=%s, risk_level=%s, total_cost=%s",
+                p3.get('delay_impact_days'), p3.get('delay_penalty'), p3.get('risk_level'), p3.get('total_cost'))
+    logger.info("")
 
     # Scenario 4: 多属性同时变化
     print_header("Step 5: What-If — 交付延迟 + 生产周期缩短")
@@ -487,11 +493,11 @@ async def main() -> None:
         title="交付延迟 8 天 + 生产缩短 2 天",
     )
     print_diff_summary(r4, "多属性")
-    print()
+    logger.info("")
 
     await neo4j_manager.disconnect()
     print_header("Demo 完成")
-    print("Executor 状态已恢复为基线。计算图 + 数据节点已写入 Neo4j，可在 Browser 中执行上述 Cypher 查看。")
+    logger.info("Executor 状态已恢复为基线。计算图 + 数据节点已写入 Neo4j，可在 Browser 中执行上述 Cypher 查看。")
 
 
 if __name__ == "__main__":

@@ -11,9 +11,12 @@ actual_start_days and production_ready_days.
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Tuple, Dict
+
+logger = logging.getLogger(__name__)
 
 # Add src to Python path
 src_path = Path(__file__).parent.parent / "src"
@@ -52,11 +55,11 @@ NEO4J_PASSWORD = "123456789"
 # ============================================================================
 
 def print_header(title: str, width: int = 60):
-    """Print section header"""
-    print("=" * width)
-    print(title)
-    print("=" * width)
-    print()
+    """Log section header"""
+    logger.info("=" * width)
+    logger.info(title)
+    logger.info("=" * width)
+    logger.info("")
 
 
 # ============================================================================
@@ -183,9 +186,10 @@ def build_supply_chain_graph() -> Tuple[ComputationGraph, Dict]:
 
 async def main():
     """Main: Neo4j data + computation graph -> load -> execute -> What-If (delivery delay)."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     print_header("Supply Chain Delay Demo with Neo4j")
-    print("Flow: Material delivery delay -> actual start days -> production ready days")
-    print()
+    logger.info("Flow: Material delivery delay -> actual start days -> production ready days")
+    logger.info("")
 
     graph = build_supply_chain_graph()
     # Derive output properties per data node from OUTPUT_TO relationships (no hardcoding)
@@ -194,27 +198,28 @@ async def main():
     try:
         neo4j_manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
         await neo4j_manager.connect()
-        print("Connected to Neo4j")
-        print()
+        logger.info("Connected to Neo4j")
+        logger.info("")
 
         # Step 1: 同步数据节点、计算节点、计算关系到 Neo4j（一步完成）
         print_header("Step 1: Sync Graph to Neo4j (data nodes + computation nodes + relationships)")
         node_data_map = await neo4j_manager.sync_graph_to_neo4j(graph)
-        print(f"Synced: {len(node_data_map)} data nodes, {len(graph.computation_nodes)} computation nodes, {len(graph.computation_relationships)} relationships")
-        print()
+        logger.info("Synced: %s data nodes, %s computation nodes, %s relationships",
+                   len(node_data_map), len(graph.computation_nodes), len(graph.computation_relationships))
+        logger.info("")
 
         # Step 2: Query graph structure from Neo4j
         print_header("Step 2: Query Graph Structure from Neo4j")
         await neo4j_manager.print_graph_structure()
         neo4j_manager.print_visualization_instructions(graph)
-        print()
+        logger.info("")
 
         # Step 3: Execute computations
         print_header("Step 3: Execute Computations")
         executor = ComputationGraphExecutor(graph, node_data_map)
         executor.execute(verbose=True)
         executor.print_node_data("Computed Results")
-        print()
+        logger.info("")
 
         # Step 4: Write computed outputs to Neo4j (all three data nodes)
         print_header("Step 4: Write Outputs to Neo4j")
@@ -222,8 +227,8 @@ async def main():
             await neo4j_manager.write_output_properties(
                 node_uuid, executor.get_node_data(node_uuid), output_properties=props
             )
-        print("Outputs written to Neo4j (delay_days, actual_start_days, production_ready_days)")
-        print()
+        logger.info("Outputs written to Neo4j (delay_days, actual_start_days, production_ready_days)")
+        logger.info("")
 
         # Step 5: What-If - Delivery delay (run_scenario: isolated run, returns baseline/scenario/diff)
         print_header("Step 5: What-If Simulation - Material Delivery Delay")
@@ -232,26 +237,27 @@ async def main():
             [("shipment_001", "actual_delivery_days", 110)],  # 10 days late
             title="Material Delivery Delay",
         )
-        # print(result)
         plan_baseline = result.baseline.get("production_plan_001", {})
         plan_scenario = result.scenario.get("production_plan_001", {})
         prod_baseline = result.baseline.get("product_001", {})
         prod_scenario = result.scenario.get("product_001", {})
-        print("\nImpact summary:")
-        print(f"  actual_start_days:     {plan_scenario.get('actual_start_days')} (was {plan_baseline.get('actual_start_days')} in baseline)")
-        print(f"  production_ready_days: {prod_scenario.get('production_ready_days')} (was {prod_baseline.get('production_ready_days')} in baseline)")
-        print()
+        logger.info("Impact summary:")
+        logger.info("  actual_start_days:     %s (was %s in baseline)",
+                   plan_scenario.get('actual_start_days'), plan_baseline.get('actual_start_days'))
+        logger.info("  production_ready_days: %s (was %s in baseline)",
+                   prod_scenario.get('production_ready_days'), prod_baseline.get('production_ready_days'))
+        logger.info("")
 
         await neo4j_manager.disconnect()
-        print("Neo4j connection closed")
-        print()
+        logger.info("Neo4j connection closed")
+        logger.info("")
         print_header("Demo Completed!")
-        print("View graph in Neo4j Browser at: http://localhost:7474")
+        logger.info("View graph in Neo4j Browser at: http://localhost:7474")
 
     except Exception as e:
-        print(f"Error: {e}")
-        print("\nTip: Please make sure Neo4j database is running")
-        print("Start Neo4j: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/123456789 neo4j")
+        logger.error("Error: %s", e)
+        logger.info("Tip: Please make sure Neo4j database is running")
+        logger.info("Start Neo4j: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/123456789 neo4j")
 
 
 if __name__ == "__main__":

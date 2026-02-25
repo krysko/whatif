@@ -10,9 +10,12 @@ Flow: Neo4j has data + defined computation graph -> load data from Neo4j by grap
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import Tuple, Dict
+
+logger = logging.getLogger(__name__)
 
 # Add src to Python path
 src_path = Path(__file__).parent.parent / "src"
@@ -52,11 +55,11 @@ OUTPUT_PROPERTIES = ["subtotal", "tax"]
 # ============================================================================
 
 def print_header(title: str, width: int = 60):
-    """Print section header"""
-    print("=" * width)
-    print(title)
-    print("=" * width)
-    print()
+    """Log section header"""
+    logger.info("=" * width)
+    logger.info(title)
+    logger.info("=" * width)
+    logger.info("")
 
 
 # ============================================================================
@@ -158,9 +161,10 @@ def build_computation_graph() -> Tuple[ComputationGraph, Dict]:
 
 async def main():
     """Main: Neo4j data + computation graph -> load data from Neo4j -> execute -> What-If."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     print_header("Simple Computation Chain Demo with Neo4j (Refactored)")
-    print("Flow: Neo4j data + defined computation graph -> load data by graph -> execute -> What-If")
-    print()
+    logger.info("Flow: Neo4j data + defined computation graph -> load data by graph -> execute -> What-If")
+    logger.info("")
 
     # Build graph definition (and seed data for optional first-time create)
     graph, seed_node_data = build_computation_graph()
@@ -168,57 +172,58 @@ async def main():
     try:
         neo4j_manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
         await neo4j_manager.connect()
-        print("Connected to Neo4j")
-        print()
+        logger.info("Connected to Neo4j")
+        logger.info("")
 
         # Step 1: 同步数据节点、计算节点、计算关系到 Neo4j（一步完成）
         print_header("Step 1: Sync Graph to Neo4j (data nodes + computation nodes + relationships)")
         node_data_map = await neo4j_manager.sync_graph_to_neo4j(graph)
-        print(f"Synced: {len(node_data_map)} data nodes, {len(graph.computation_nodes)} computation nodes, {len(graph.computation_relationships)} relationships")
-        print()
+        logger.info("Synced: %s data nodes, %s computation nodes, %s relationships",
+                   len(node_data_map), len(graph.computation_nodes), len(graph.computation_relationships))
+        logger.info("")
 
         # Step 2: Query graph structure from Neo4j
         print_header("Step 2: Query Graph Structure from Neo4j")
         await neo4j_manager.print_graph_structure()
-        print()
+        logger.info("")
 
         # Step 3: Execute computations using loaded node_data_map
         print_header("Step 3: Execute Computations")
         executor = ComputationGraphExecutor(graph, node_data_map)
         executor.execute(verbose=True)
         executor.print_node_data("Computed Results")
-        print()
+        logger.info("")
 
         # Step 4: Write computed outputs to Neo4j
         print_header("Step 4: Write Outputs to Neo4j")
         await neo4j_manager.write_output_properties("invoice_001", executor.get_node_data("invoice_001"))
-        print("Outputs written to Neo4j")
-        print()
+        logger.info("Outputs written to Neo4j")
+        logger.info("")
 
-        # Step 5 & 6: What-If simulations (generic property change)
+        # Step 5 & 6: What-If simulations (run_scenario: isolated run, returns baseline/scenario/diff)
         print_header("Step 5: What-If Simulation - Price Increase")
         simulator = WhatIfSimulator(executor, neo4j_manager)
-        await simulator.simulate_property_change(
-            "order_001", "price", 150.0, title="Price Increase"
+        await simulator.run_scenario(
+            [("order_001", "price", 150.0)], title="Price Increase"
         )
-        print()
+        logger.info("")
 
         print_header("Step 6: What-If Simulation - Quantity Change")
-        await simulator.simulate_property_change(
-            "order_001", "quantity", 10, title="Quantity Change"
+        await simulator.run_scenario(
+            [("order_001", "quantity", 10)], title="Quantity Change"
         )
-        print()
+        logger.info("")
 
         await neo4j_manager.disconnect()
-        print("Neo4j connection closed")
-        print()
+        logger.info("Neo4j connection closed")
+        logger.info("")
         print_header("Demo Completed!")
-        print("\nView graph in Neo4j Browser at: http://localhost:7474")
+        logger.info("View graph in Neo4j Browser at: http://localhost:7474")
 
     except Exception as e:
-        print(f"Error: {e}")
-        print("\nTip: Please make sure Neo4j database is running")
-        print("Start Neo4j: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/123456789 neo4j")
+        logger.error("Error: %s", e)
+        logger.info("Tip: Please make sure Neo4j database is running")
+        logger.info("Start Neo4j: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/123456789 neo4j")
 
 
 if __name__ == "__main__":

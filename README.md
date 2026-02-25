@@ -51,7 +51,7 @@
 | 模块 | 文件 | 功能 |
 |------|------|------|
 | **ComputationGraphExecutor** | `computation_graph_executor.py` | 用 NetworkX 建图；依赖图含 DEPENDS_ON + writer-before-reader 边；拓扑序执行；`snapshot_data_nodes()` / `restore_data_nodes()` 做基线快照与恢复；单节点 `eval(code)` 执行，经 OUTPUT_TO 写回后继节点。 |
-| **WhatIfSimulator** | `what_if_simulator.py` | What-If 入口：`simulate_property_change(node_id, property_name, new_value, ...)`；内部先 snapshot → 改属性 → 执行 → 可选写回 Neo4j → 最后 restore，保证基线可重复。支持 `output_node_id` 或 `output_targets` 多节点写回。`run_scenario(property_changes, title)`：在隔离环境中执行一次模拟（可多属性修改），不改变 executor 内存，返回 `ScenarioRunResult(baseline, scenario, diff)`，其中 diff 为模拟与基线的属性级差异列表。 |
+| **WhatIfSimulator** | `what_if_simulator.py` | What-If 入口：`run_scenario(property_changes, title)`。在隔离环境中执行一次模拟（可多属性修改），内部 snapshot → 改属性 → 执行 → restore，不改变 executor 内存；返回 `ScenarioRunResult(baseline, scenario, diff)`，其中 diff 为模拟与基线的属性级差异列表。 |
 | **Neo4jGraphManager** | `neo4j_graph_manager.py` | 连接 Neo4j；`create_business_nodes(specs)` 创建业务节点；**`sync_graph_to_neo4j(graph, node_data_map=None)`** 一步完成：同步数据节点、创建计算节点、创建计算关系（便于 Neo4j 可视化）；不传 `node_data_map` 时从 Neo4j 按 uuid 加载，传入时从内存同步；`get_visualization_cypher(graph)`、`print_visualization_instructions(graph)` 生成 Cypher；`write_output_properties(...)` 写回。 |
 
 ---
@@ -66,7 +66,7 @@
 2. **同步图到 Neo4j（一步）**：`node_data_map = await neo4j_manager.sync_graph_to_neo4j(graph)` — 同步数据节点、计算节点、计算关系到 Neo4j；不传 `node_data_map` 时从 Neo4j 按 uuid 加载数据，传入时从内存同步。运行 `print_visualization_instructions(graph)` 可打印 Cypher，在 Neo4j Browser (http://localhost:7474) 中可视化。
 3. **执行计算**：`ComputationGraphExecutor(graph, node_data_map)`，再 `executor.execute()`；按拓扑序执行，结果写入内存中数据节点的属性。
 4. **写回 Neo4j（可选）**：对需要写回的节点调用 `write_output_properties(node_uuid, executor.get_node_data(node_uuid), output_properties)`；可从 `graph.get_output_properties_by_data_node()` 得到各节点写回属性列表。
-5. **What-If**：`WhatIfSimulator(executor, neo4j_manager).simulate_property_change(node_id, property_name, new_value, output_node_id=... 或 output_targets=...)`；内部会 snapshot → 改值 → 执行 → 可选写回 → restore。若需程序化对比模拟与基线，可用 `run_scenario(property_changes, title)`，返回 `ScenarioRunResult(baseline, scenario, diff)`，不写 Neo4j、不改变 executor 内存。
+5. **What-If**：`WhatIfSimulator(executor, neo4j_manager).run_scenario(property_changes, title)`；`property_changes` 为 `[(node_id, property_name, new_value), ...]`。内部 snapshot → 改值 → 执行 → restore，不写 Neo4j、不改变 executor 内存；返回 `ScenarioRunResult(baseline, scenario, diff)` 供程序化对比。
 
 ### 4.2 Simple Computation Chain (`simple_computation_chain.py`)
 
@@ -161,5 +161,5 @@
 
 ## 八、扩展与限制（参考文档）
 
-- **已有**：单属性 What-If（simulate_property_change）、多场景隔离与 diff（run_scenario → ScenarioRunResult）、基线快照/恢复、多节点写回（output_targets）、从图推导写回属性、计算图+数据节点在 Neo4j Browser 中可视化（print_visualization_instructions）、同层节点用 priority 排序。
+- **已有**：What-If 场景运行（run_scenario → ScenarioRunResult，可单属性或多属性修改）、多场景隔离与 diff、基线快照/恢复、从图推导写回属性、计算图+数据节点在 Neo4j Browser 中可视化（print_visualization_instructions）、同层节点用 priority 排序。
 - **规划中**：多变量/批量 overrides、敏感性分析、按「数据节点+属性」的影响分析、写回默认关闭与安全执行等，见 `docs/whatif_图数据库分析_差距与完善.md`。
