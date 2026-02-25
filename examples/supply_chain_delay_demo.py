@@ -238,20 +238,21 @@ async def main():
         print("Outputs written to Neo4j (delay_days, actual_start_days, production_ready_days)")
         print()
 
-        # Step 7: What-If - Delivery delay (using WhatIfSimulator with output_targets for multi-node write)
+        # Step 7: What-If - Delivery delay (run_scenario: isolated run, returns baseline/scenario/diff)
         print_header("Step 7: What-If Simulation - Material Delivery Delay")
         simulator = WhatIfSimulator(executor, neo4j_manager)
-        result = await simulator.simulate_property_change(
-            "shipment_001",
-            "actual_delivery_days",
-            110,  # 10 days late
+        result = await simulator.run_scenario(
+            [("shipment_001", "actual_delivery_days", 110)],  # 10 days late
             title="Material Delivery Delay",
         )
-        plan_data = result.get("production_plan_001", {})
-        prod_data = result.get("product_001", {})
+        # print(result)
+        plan_baseline = result.baseline.get("production_plan_001", {})
+        plan_scenario = result.scenario.get("production_plan_001", {})
+        prod_baseline = result.baseline.get("product_001", {})
+        prod_scenario = result.scenario.get("product_001", {})
         print("\nImpact summary:")
-        print(f"  actual_start_days:     {plan_data.get('actual_start_days')} (was 102 in baseline)")
-        print(f"  production_ready_days: {prod_data.get('production_ready_days')} (was 107 in baseline)")
+        print(f"  actual_start_days:     {plan_scenario.get('actual_start_days')} (was {plan_baseline.get('actual_start_days')} in baseline)")
+        print(f"  production_ready_days: {prod_scenario.get('production_ready_days')} (was {prod_baseline.get('production_ready_days')} in baseline)")
         print()
 
         await neo4j_manager.disconnect()

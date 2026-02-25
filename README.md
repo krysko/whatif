@@ -51,7 +51,7 @@
 | 模块 | 文件 | 功能 |
 |------|------|------|
 | **ComputationGraphExecutor** | `computation_graph_executor.py` | 用 NetworkX 建图；依赖图含 DEPENDS_ON + writer-before-reader 边；拓扑序执行；`snapshot_data_nodes()` / `restore_data_nodes()` 做基线快照与恢复；单节点 `eval(code)` 执行，经 OUTPUT_TO 写回后继节点。 |
-| **WhatIfSimulator** | `what_if_simulator.py` | What-If 入口：`simulate_property_change(node_id, property_name, new_value, ...)`；内部先 snapshot → 改属性 → 执行 → 可选写回 Neo4j → 最后 restore，保证基线可重复。支持 `output_node_id` 或 `output_targets` 多节点写回。 |
+| **WhatIfSimulator** | `what_if_simulator.py` | What-If 入口：`simulate_property_change(node_id, property_name, new_value, ...)`；内部先 snapshot → 改属性 → 执行 → 可选写回 Neo4j → 最后 restore，保证基线可重复。支持 `output_node_id` 或 `output_targets` 多节点写回。`run_scenario(property_changes, title)`：在隔离环境中执行一次模拟（可多属性修改），不改变 executor 内存，返回 `ScenarioRunResult(baseline, scenario, diff)`，其中 diff 为模拟与基线的属性级差异列表。 |
 | **Neo4jGraphManager** | `neo4j_graph_manager.py` | 连接 Neo4j；`create_business_nodes(specs)` 创建业务节点（Order、Invoice 等）；`load_graph_data_from_neo4j(graph, seed_specs)` 按图 uuid 加载，缺节点时用 seed_specs 创建再加载；MERGE DataNode、创建 ComputationNode 与关系；`write_output_properties(node_uuid, node_data, output_properties)` 写回。 |
 
 ---
@@ -67,7 +67,7 @@
 3. **持久化图结构（可选）**：`create_computation_nodes(graph)`、`create_relationships(graph)`，在 Neo4j 中创建 ComputationNode 与关系。
 4. **执行计算**：`ComputationGraphExecutor(graph, node_data_map)`，再 `executor.execute()`；按拓扑序执行，结果写入内存中数据节点的属性。
 5. **写回 Neo4j（可选）**：对需要写回的节点调用 `write_output_properties(node_uuid, executor.get_node_data(node_uuid), output_properties)`；可从 `graph.get_output_properties_by_data_node()` 得到各节点写回属性列表。
-6. **What-If**：`WhatIfSimulator(executor, neo4j_manager).simulate_property_change(node_id, property_name, new_value, output_node_id=... 或 output_targets=...)`；内部会 snapshot → 改值 → 执行 → 可选写回 → restore。
+6. **What-If**：`WhatIfSimulator(executor, neo4j_manager).simulate_property_change(node_id, property_name, new_value, output_node_id=... 或 output_targets=...)`；内部会 snapshot → 改值 → 执行 → 可选写回 → restore。若需程序化对比模拟与基线，可用 `run_scenario(property_changes, title)`，返回 `ScenarioRunResult(baseline, scenario, diff)`，不写 Neo4j、不改变 executor 内存。
 
 ### 4.2 Simple Computation Chain (`simple_computation_chain.py`)
 

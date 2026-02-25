@@ -6,7 +6,7 @@ WhatIfSimulator 单元测试。
 import pytest
 
 from domain.services.computation_graph_executor import ComputationGraphExecutor
-from domain.services.what_if_simulator import WhatIfSimulator
+from domain.services.what_if_simulator import ScenarioRunResult, WhatIfSimulator
 
 
 class _MockNeo4jManager:
@@ -58,3 +58,48 @@ class TestWhatIfSimulator:
         assert result["invoice_001"]["tax"] == 100.0
         # 原始 tax_rate 应被恢复
         assert executor.get_node_data("invoice_001")["tax_rate"] == 0.1
+
+    @pytest.mark.asyncio
+    async def test_run_scenario_restores_executor(
+        self, sample_graph, sample_node_data_map
+    ):
+        """run_scenario 后 executor 状态与调用前一致（与 baseline 一致）。"""
+        executor = ComputationGraphExecutor(sample_graph, sample_node_data_map)
+        executor.execute(verbose=False)
+        before = executor.get_all_data_nodes()
+        simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager())
+        await simulator.run_scenario(
+            [("order_001", "price", 200.0)],
+            title="",
+        )
+        after = executor.get_all_data_nodes()
+        assert after["order_001"]["price"] == 100.0
+        assert after["invoice_001"]["subtotal"] == 500.0
+        assert after == before
+
+    @pytest.mark.asyncio
+    async def test_run_scenario_returns_baseline_scenario_diff(
+        self, sample_graph, sample_node_data_map
+    ):
+        """run_scenario 返回的 baseline / scenario / diff 符合预期。"""
+        executor = ComputationGraphExecutor(sample_graph, sample_node_data_map)
+        executor.execute(verbose=False)
+        simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager())
+        result = await simulator.run_scenario(
+            [("order_001", "price", 200.0)],
+            title="",
+        )
+        assert isinstance(result, ScenarioRunResult)
+        assert result.baseline["order_001"]["price"] == 100.0
+        assert result.baseline["invoice_001"]["subtotal"] == 500.0
+        assert result.scenario["order_001"]["price"] == 200.0
+        assert result.scenario["invoice_001"]["subtotal"] == 1000.0
+        # diff 应包含 order_001.price、invoice_001.subtotal、invoice_001.tax 等变化
+        diff_props = {(d["node_id"], d["property_name"]) for d in result.diff}
+        assert ("order_001", "price") in diff_props
+        assert ("invoice_001", "subtotal") in diff_props
+        assert ("invoice_001", "tax") in diff_props
+        for d in result.diff:
+            if d["node_id"] == "order_001" and d["property_name"] == "price":
+                assert d["baseline_value"] == 100.0
+                assert d["scenario_value"] == 200.0

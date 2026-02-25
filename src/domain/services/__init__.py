@@ -8,12 +8,13 @@ from .computation_graph_executor import ComputationGraphExecutor
 from .neo4j_graph_manager import Neo4jGraphManager
 
 # What-If simulator for scenario testing
-from .what_if_simulator import WhatIfSimulator
+from .what_if_simulator import ScenarioRunResult, WhatIfSimulator
 
 __all__ = [
     'DataProvider',
     'Neo4jDataProvider',
     'ComputationGraphExecutor',
     'Neo4jGraphManager',
+    'ScenarioRunResult',
     'WhatIfSimulator',
 ]
