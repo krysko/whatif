@@ -197,41 +197,27 @@ async def main():
         print("Connected to Neo4j")
         print()
 
-        # Step 1: Load from Neo4j by uuid (missing nodes will raise ValueError)
-        print_header("Step 1: Load from Neo4j (by computation graph uuids)")
-        node_data_map = await neo4j_manager.load_graph_data_from_neo4j(graph)
-        print(f"Loaded {len(node_data_map)} data nodes:")
-        for node_uuid in node_data_map:
-            print(f"  - {node_uuid}")
+        # Step 1: 同步数据节点、计算节点、计算关系到 Neo4j（一步完成）
+        print_header("Step 1: Sync Graph to Neo4j (data nodes + computation nodes + relationships)")
+        node_data_map = await neo4j_manager.sync_graph_to_neo4j(graph)
+        print(f"Synced: {len(node_data_map)} data nodes, {len(graph.computation_nodes)} computation nodes, {len(graph.computation_relationships)} relationships")
         print()
 
-        # Step 2: Create computation nodes in Neo4j
-        print_header("Step 2: Create Computation Nodes in Neo4j")
-        comp_node_id_map = await neo4j_manager.create_computation_nodes(graph)
-        print(f"Created {len(comp_node_id_map)} computation nodes")
-        print()
-
-        # Step 3: Create relationships in Neo4j
-        print_header("Step 3: Create Relationships in Neo4j")
-        await neo4j_manager.create_relationships(graph)
-        print(f"Created {len(graph.computation_relationships)} relationships")
-        print()
-
-        # Step 4: Query graph structure from Neo4j
-        print_header("Step 4: Query Graph Structure from Neo4j")
+        # Step 2: Query graph structure from Neo4j
+        print_header("Step 2: Query Graph Structure from Neo4j")
         await neo4j_manager.print_graph_structure()
         neo4j_manager.print_visualization_instructions(graph)
         print()
 
-        # Step 5: Execute computations
-        print_header("Step 5: Execute Computations")
+        # Step 3: Execute computations
+        print_header("Step 3: Execute Computations")
         executor = ComputationGraphExecutor(graph, node_data_map)
         executor.execute(verbose=True)
         executor.print_node_data("Computed Results")
         print()
 
-        # Step 6: Write computed outputs to Neo4j (all three data nodes)
-        print_header("Step 6: Write Outputs to Neo4j")
+        # Step 4: Write computed outputs to Neo4j (all three data nodes)
+        print_header("Step 4: Write Outputs to Neo4j")
         for node_uuid, props in output_properties_by_node.items():
             await neo4j_manager.write_output_properties(
                 node_uuid, executor.get_node_data(node_uuid), output_properties=props
@@ -239,8 +225,8 @@ async def main():
         print("Outputs written to Neo4j (delay_days, actual_start_days, production_ready_days)")
         print()
 
-        # Step 7: What-If - Delivery delay (run_scenario: isolated run, returns baseline/scenario/diff)
-        print_header("Step 7: What-If Simulation - Material Delivery Delay")
+        # Step 5: What-If - Delivery delay (run_scenario: isolated run, returns baseline/scenario/diff)
+        print_header("Step 5: What-If Simulation - Material Delivery Delay")
         simulator = WhatIfSimulator(executor, neo4j_manager)
         result = await simulator.run_scenario(
             [("shipment_001", "actual_delivery_days", 110)],  # 10 days late

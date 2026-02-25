@@ -425,19 +425,9 @@ async def main() -> None:
     print("Connected to Neo4j")
     print()
 
-    print_header("Step 2: 同步数据节点到 Neo4j（供计算图可视化）")
-    await neo4j_manager.ensure_data_nodes_from_map(node_data_map, graph_id=graph.id)
-    print(f"DataNodes MERGE 完成: {list(node_data_map.keys())}")
-    print()
-
-    print_header("Step 3: Create Computation Nodes in Neo4j")
-    comp_node_id_map = await neo4j_manager.create_computation_nodes(graph)
-    print(f"Created {len(comp_node_id_map)} computation nodes")
-    print()
-
-    print_header("Step 4: Create Relationships in Neo4j")
-    await neo4j_manager.create_relationships(graph)
-    print(f"Created {len(graph.computation_relationships)} relationships")
+    print_header("Step 2: 同步数据节点、计算节点、计算关系到 Neo4j（一步完成）")
+    await neo4j_manager.sync_graph_to_neo4j(graph, node_data_map=node_data_map)
+    print(f"Synced: {len(node_data_map)} data nodes, {len(graph.computation_nodes)} computation nodes, {len(graph.computation_relationships)} relationships")
     neo4j_manager.print_visualization_instructions(graph)
     print()
 

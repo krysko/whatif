@@ -171,53 +171,39 @@ async def main():
         print("Connected to Neo4j")
         print()
 
-        # Step 1: Load from Neo4j by uuid (missing nodes will raise ValueError)
-        print_header("Step 1: Load from Neo4j (by computation graph uuids)")
-        node_data_map = await neo4j_manager.load_graph_data_from_neo4j(graph)
-        print(f"Loaded {len(node_data_map)} data nodes:")
-        for node_uuid in node_data_map:
-            print(f"  - {node_uuid}")
+        # Step 1: 同步数据节点、计算节点、计算关系到 Neo4j（一步完成）
+        print_header("Step 1: Sync Graph to Neo4j (data nodes + computation nodes + relationships)")
+        node_data_map = await neo4j_manager.sync_graph_to_neo4j(graph)
+        print(f"Synced: {len(node_data_map)} data nodes, {len(graph.computation_nodes)} computation nodes, {len(graph.computation_relationships)} relationships")
         print()
 
-        # Step 2: Create computation nodes in Neo4j
-        print_header("Step 2: Create Computation Nodes in Neo4j")
-        comp_node_id_map = await neo4j_manager.create_computation_nodes(graph)
-        print(f"Created {len(comp_node_id_map)} computation nodes")
-        print()
-
-        # Step 3: Create relationships in Neo4j
-        print_header("Step 3: Create Relationships in Neo4j")
-        await neo4j_manager.create_relationships(graph)
-        print(f"Created {len(graph.computation_relationships)} relationships")
-        print()
-
-        # Step 4: Query graph structure from Neo4j
-        print_header("Step 4: Query Graph Structure from Neo4j")
+        # Step 2: Query graph structure from Neo4j
+        print_header("Step 2: Query Graph Structure from Neo4j")
         await neo4j_manager.print_graph_structure()
         print()
 
-        # Step 5: Execute computations using loaded node_data_map
-        print_header("Step 5: Execute Computations")
+        # Step 3: Execute computations using loaded node_data_map
+        print_header("Step 3: Execute Computations")
         executor = ComputationGraphExecutor(graph, node_data_map)
         executor.execute(verbose=True)
         executor.print_node_data("Computed Results")
         print()
 
-        # Step 6: Write computed outputs to Neo4j
-        print_header("Step 6: Write Outputs to Neo4j")
+        # Step 4: Write computed outputs to Neo4j
+        print_header("Step 4: Write Outputs to Neo4j")
         await neo4j_manager.write_output_properties("invoice_001", executor.get_node_data("invoice_001"))
         print("Outputs written to Neo4j")
         print()
 
-        # Step 7 & 8: What-If simulations (generic property change)
-        print_header("Step 7: What-If Simulation - Price Increase")
+        # Step 5 & 6: What-If simulations (generic property change)
+        print_header("Step 5: What-If Simulation - Price Increase")
         simulator = WhatIfSimulator(executor, neo4j_manager)
         await simulator.simulate_property_change(
             "order_001", "price", 150.0, title="Price Increase"
         )
         print()
 
-        print_header("Step 8: What-If Simulation - Quantity Change")
+        print_header("Step 6: What-If Simulation - Quantity Change")
         await simulator.simulate_property_change(
             "order_001", "quantity", 10, title="Quantity Change"
         )

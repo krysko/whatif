@@ -52,7 +52,7 @@
 |------|------|------|
 | **ComputationGraphExecutor** | `computation_graph_executor.py` | 用 NetworkX 建图；依赖图含 DEPENDS_ON + writer-before-reader 边；拓扑序执行；`snapshot_data_nodes()` / `restore_data_nodes()` 做基线快照与恢复；单节点 `eval(code)` 执行，经 OUTPUT_TO 写回后继节点。 |
 | **WhatIfSimulator** | `what_if_simulator.py` | What-If 入口：`simulate_property_change(node_id, property_name, new_value, ...)`；内部先 snapshot → 改属性 → 执行 → 可选写回 Neo4j → 最后 restore，保证基线可重复。支持 `output_node_id` 或 `output_targets` 多节点写回。`run_scenario(property_changes, title)`：在隔离环境中执行一次模拟（可多属性修改），不改变 executor 内存，返回 `ScenarioRunResult(baseline, scenario, diff)`，其中 diff 为模拟与基线的属性级差异列表。 |
-| **Neo4jGraphManager** | `neo4j_graph_manager.py` | 连接 Neo4j；`create_business_nodes(specs)` 创建业务节点；`load_graph_data_from_neo4j(graph)` 按图 uuid 加载；`ensure_data_nodes_from_map(node_data_map, graph_id)` 从内存数据同步 DataNode（便于可视化）；`create_computation_nodes(graph)`、`create_relationships(graph)` 持久化计算图；`get_visualization_cypher(graph)`、`print_visualization_instructions(graph)` 生成在 Neo4j Browser 中查看「计算图+数据节点」的 Cypher；`write_output_properties(...)` 写回。 |
+| **Neo4jGraphManager** | `neo4j_graph_manager.py` | 连接 Neo4j；`create_business_nodes(specs)` 创建业务节点；**`sync_graph_to_neo4j(graph, node_data_map=None)`** 一步完成：同步数据节点、创建计算节点、创建计算关系（便于 Neo4j 可视化）；不传 `node_data_map` 时从 Neo4j 按 uuid 加载，传入时从内存同步；`get_visualization_cypher(graph)`、`print_visualization_instructions(graph)` 生成 Cypher；`write_output_properties(...)` 写回。 |
 
 ---
 
@@ -63,11 +63,10 @@
 **代表 Demo**：`simple_computation_chain.py`、`supply_chain_delay_demo.py`。
 
 1. **连接 Neo4j**：`Neo4jGraphManager.connect()`。
-2. **按图加载数据**：`load_graph_data_from_neo4j(graph, seed_specs)` — 按 `graph.get_data_node_ids()` 的 uuid 拉取；若节点不存在且提供 `seed_specs`，则先 `create_business_nodes` 再加载；得到 `node_data_map`。
-3. **持久化图结构（可选）**：`create_computation_nodes(graph)`、`create_relationships(graph)`，在 Neo4j 中创建 ComputationNode 与关系。运行 `print_visualization_instructions(graph)` 可打印一段 Cypher，粘贴到 Neo4j Browser (http://localhost:7474) 即可可视化「计算图 + 数据节点」。
-4. **执行计算**：`ComputationGraphExecutor(graph, node_data_map)`，再 `executor.execute()`；按拓扑序执行，结果写入内存中数据节点的属性。
-5. **写回 Neo4j（可选）**：对需要写回的节点调用 `write_output_properties(node_uuid, executor.get_node_data(node_uuid), output_properties)`；可从 `graph.get_output_properties_by_data_node()` 得到各节点写回属性列表。
-6. **What-If**：`WhatIfSimulator(executor, neo4j_manager).simulate_property_change(node_id, property_name, new_value, output_node_id=... 或 output_targets=...)`；内部会 snapshot → 改值 → 执行 → 可选写回 → restore。若需程序化对比模拟与基线，可用 `run_scenario(property_changes, title)`，返回 `ScenarioRunResult(baseline, scenario, diff)`，不写 Neo4j、不改变 executor 内存。
+2. **同步图到 Neo4j（一步）**：`node_data_map = await neo4j_manager.sync_graph_to_neo4j(graph)` — 同步数据节点、计算节点、计算关系到 Neo4j；不传 `node_data_map` 时从 Neo4j 按 uuid 加载数据，传入时从内存同步。运行 `print_visualization_instructions(graph)` 可打印 Cypher，在 Neo4j Browser (http://localhost:7474) 中可视化。
+3. **执行计算**：`ComputationGraphExecutor(graph, node_data_map)`，再 `executor.execute()`；按拓扑序执行，结果写入内存中数据节点的属性。
+4. **写回 Neo4j（可选）**：对需要写回的节点调用 `write_output_properties(node_uuid, executor.get_node_data(node_uuid), output_properties)`；可从 `graph.get_output_properties_by_data_node()` 得到各节点写回属性列表。
+5. **What-If**：`WhatIfSimulator(executor, neo4j_manager).simulate_property_change(node_id, property_name, new_value, output_node_id=... 或 output_targets=...)`；内部会 snapshot → 改值 → 执行 → 可选写回 → restore。若需程序化对比模拟与基线，可用 `run_scenario(property_changes, title)`，返回 `ScenarioRunResult(baseline, scenario, diff)`，不写 Neo4j、不改变 executor 内存。
 
 ### 4.2 Simple Computation Chain (`simple_computation_chain.py`)
 

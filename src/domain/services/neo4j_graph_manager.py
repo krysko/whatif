@@ -123,6 +123,30 @@ class Neo4jGraphManager:
             )
         return node_data_map
 
+    async def sync_graph_to_neo4j(
+        self,
+        graph: ComputationGraph,
+        node_data_map: Optional[Dict[str, Dict]] = None,
+    ) -> Dict[str, Dict]:
+        """
+        将数据节点、计算节点、计算关系同步到 Neo4j，便于在 Browser 中可视化。
+        一步完成：同步 DataNode -> 创建 ComputationNode -> 创建关系。
+
+        - 若 node_data_map 为 None：从 Neo4j 按 graph 的 data node uuid 加载数据并物化 DataNode，
+          缺失节点会抛出 ValueError。
+        - 若提供 node_data_map：用 ensure_data_nodes_from_map 将内存中的数据同步为 DataNode。
+
+        Returns:
+            node_data_map，供 ComputationGraphExecutor 使用。
+        """
+        if node_data_map is None:
+            node_data_map = await self.load_graph_data_from_neo4j(graph)
+        else:
+            await self.ensure_data_nodes_from_map(node_data_map, graph_id=graph.id)
+        await self.create_computation_nodes(graph)
+        await self.create_relationships(graph)
+        return node_data_map
+
     async def ensure_data_nodes_from_map(
         self,
         node_data_map: Dict[str, Dict],
