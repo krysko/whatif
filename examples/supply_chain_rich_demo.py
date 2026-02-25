@@ -90,7 +90,8 @@ from domain.services import (
     ComputationGraphExecutor,
     ScenarioRunResult,
     WhatIfSimulator,
-    Neo4jGraphManager
+    Neo4jGraphManager,
+    format_scenario_result,
 )
 
 
@@ -117,14 +118,9 @@ def print_header(title: str, width: int = 60) -> None:
     logger.info("")
 
 
-def print_diff_summary(result: ScenarioRunResult, label: str) -> None:
-    logger.info("  [%s] 共 %s 项变化:", label, len(result.diff))
-    for d in result.diff[:10]:
-        logger.info("    %s.%s: %s -> %s",
-                    d['node_id'], d['property_name'],
-                    d['baseline_value'], d['scenario_value'])
-    if len(result.diff) > 10:
-        logger.info("    ... 其余 %s 项", len(result.diff) - 10)
+def print_scenario_result(result: ScenarioRunResult, label: str, max_diff: int = 15) -> None:
+    """格式化输出 ScenarioRunResult（输入覆盖、受影响节点、关键输出、属性变化、执行状态）。"""
+    format_scenario_result(result, label=label, max_diff_items=max_diff, log_fn=logger.info)
 
 
 # ============================================================================
@@ -445,7 +441,7 @@ async def main() -> None:
         [("shipment_001", "actual_delivery_days", 101)],
         title="交付延迟 1 天",
     )
-    print_diff_summary(r0, "交付延迟 1 天")
+    print_scenario_result(r0, "交付延迟 1 天")
     logger.info("")
 
     # Scenario 1: 交付延迟 10 天
@@ -454,7 +450,7 @@ async def main() -> None:
         [("shipment_001", "actual_delivery_days", 110)],
         title="交付延迟 10 天",
     )
-    print_diff_summary(r1, "交付延迟 10 天")
+    print_scenario_result(r1, "交付延迟 10 天")
     s1 = r1.scenario
     p1 = s1.get('product_001', {})
     logger.info("  关键结果: production_ready_days=%s, delay_impact_days=%s, delay_penalty=%s, risk_level=%s, total_cost=%s",
@@ -468,7 +464,7 @@ async def main() -> None:
         [("shipment_001", "buffer_days", 8)],
         title="增加缓冲 3 天",
     )
-    print_diff_summary(r2, "增加缓冲")
+    print_scenario_result(r2, "增加缓冲")
     logger.info("")
 
     # Scenario 3: 承诺交付日提前
@@ -477,7 +473,7 @@ async def main() -> None:
         [("product_001", "promised_delivery_days", 105)],
         title="承诺日提前",
     )
-    print_diff_summary(r3, "承诺日提前")
+    print_scenario_result(r3, "承诺日提前")
     p3 = r3.scenario.get('product_001', {})
     logger.info("  关键结果: delay_impact_days=%s, delay_penalty=%s, risk_level=%s, total_cost=%s",
                 p3.get('delay_impact_days'), p3.get('delay_penalty'), p3.get('risk_level'), p3.get('total_cost'))
@@ -492,7 +488,7 @@ async def main() -> None:
         ],
         title="交付延迟 8 天 + 生产缩短 2 天",
     )
-    print_diff_summary(r4, "多属性")
+    print_scenario_result(r4, "多属性")
     logger.info("")
 
     await neo4j_manager.disconnect()

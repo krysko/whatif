@@ -36,6 +36,7 @@ from domain.services import (
     ComputationGraphExecutor,
     Neo4jGraphManager,
     WhatIfSimulator,
+    format_scenario_result,
 )
 
 
@@ -237,16 +238,7 @@ async def main():
             [("shipment_001", "actual_delivery_days", 110)],  # 10 days late
             title="Material Delivery Delay",
         )
-        plan_baseline = result.baseline.get("production_plan_001", {})
-        plan_scenario = result.scenario.get("production_plan_001", {})
-        prod_baseline = result.baseline.get("product_001", {})
-        prod_scenario = result.scenario.get("product_001", {})
-        logger.info("Impact summary:")
-        logger.info("  actual_start_days:     %s (was %s in baseline)",
-                   plan_scenario.get('actual_start_days'), plan_baseline.get('actual_start_days'))
-        logger.info("  production_ready_days: %s (was %s in baseline)",
-                   prod_scenario.get('production_ready_days'), prod_baseline.get('production_ready_days'))
-        logger.info("")
+        format_scenario_result(result, label="Material Delivery Delay", log_fn=logger.info)
 
         await neo4j_manager.disconnect()
         logger.info("Neo4j connection closed")
