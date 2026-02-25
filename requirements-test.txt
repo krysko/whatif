@@ -1,0 +1,4 @@
+# 测试依赖（在项目根目录: pip install -r requirements-test.txt）
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+networkx>=3.0

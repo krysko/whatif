@@ -199,10 +199,10 @@ async def main():
 
         # Step 1: Load from Neo4j by uuid (missing nodes will raise ValueError)
         print_header("Step 1: Load from Neo4j (by computation graph uuids)")
-        node_data_map, data_node_id_map = await neo4j_manager.load_graph_data_from_neo4j(graph)
+        node_data_map = await neo4j_manager.load_graph_data_from_neo4j(graph)
         print(f"Loaded {len(node_data_map)} data nodes:")
         for node_uuid in node_data_map:
-            print(f"  - {node_uuid} -> Neo4j ID: {data_node_id_map.get(node_uuid, '?')}")
+            print(f"  - {node_uuid}")
         print()
 
         # Step 2: Create computation nodes in Neo4j
@@ -245,7 +245,6 @@ async def main():
             "shipment_001",
             "actual_delivery_days",
             110,  # 10 days late
-            output_targets=output_properties_by_node,
             title="Material Delivery Delay",
         )
         plan_data = result.get("production_plan_001", {})

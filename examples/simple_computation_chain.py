@@ -173,10 +173,10 @@ async def main():
 
         # Step 1: Load from Neo4j by uuid (missing nodes will raise ValueError)
         print_header("Step 1: Load from Neo4j (by computation graph uuids)")
-        node_data_map, data_node_id_map = await neo4j_manager.load_graph_data_from_neo4j(graph)
+        node_data_map = await neo4j_manager.load_graph_data_from_neo4j(graph)
         print(f"Loaded {len(node_data_map)} data nodes:")
         for node_uuid in node_data_map:
-            print(f"  - {node_uuid} -> Neo4j ID: {data_node_id_map.get(node_uuid, '?')}")
+            print(f"  - {node_uuid}")
         print()
 
         # Step 2: Create computation nodes in Neo4j
@@ -213,13 +213,13 @@ async def main():
         print_header("Step 7: What-If Simulation - Price Increase")
         simulator = WhatIfSimulator(executor, neo4j_manager)
         await simulator.simulate_property_change(
-            "order_001", "price", 150.0, output_node_id="invoice_001", title="Price Increase"
+            "order_001", "price", 150.0, title="Price Increase"
         )
         print()
 
         print_header("Step 8: What-If Simulation - Quantity Change")
         await simulator.simulate_property_change(
-            "order_001", "quantity", 10, output_node_id="invoice_001", title="Quantity Change"
+            "order_001", "quantity", 10, title="Quantity Change"
         )
         print()
 

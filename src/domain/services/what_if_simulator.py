@@ -22,8 +22,6 @@ class WhatIfSimulator:
         node_id: str,
         property_name: str,
         new_value,
-        output_node_id: Optional[str] = None,
-        output_targets: Optional[Dict[str, List[str]]] = None,
         title: str = "Property Change",
     ) -> Dict:
         """
@@ -54,21 +52,6 @@ class WhatIfSimulator:
             print(f"\nRe-executing computations...")
             self.executor.execute(verbose=False)
             self.executor.print_node_data(f"Results After {title}")
-
-            if output_targets:
-                print("Writing updated outputs to Neo4j...")
-                for node_uuid, props in output_targets.items():
-                    await self.neo4j_manager.write_output_properties(
-                        node_uuid,
-                        self.executor.get_node_data(node_uuid),
-                        output_properties=props,
-                    )
-            elif output_node_id:
-                print("Writing updated outputs to Neo4j...")
-                await self.neo4j_manager.write_output_properties(
-                    output_node_id,
-                    self.executor.get_node_data(output_node_id),
-                )
 
             return self.executor.get_all_data_nodes()
         finally:

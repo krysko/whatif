@@ -25,7 +25,6 @@ class Neo4jGraphManager:
         self.user = user
         self.password = password
         self.data_provider: Optional[Neo4jDataProvider] = None
-        self.data_node_id_map: Dict[str, str] = {}
         self.comp_node_id_map: Dict[str, str] = {}
 
     async def connect(self):
@@ -43,14 +42,14 @@ class Neo4jGraphManager:
 
     async def create_data_nodes(self, node_data_map: Dict[str, Dict]) -> Dict[str, str]:
         """Create nodes with label DataNode (legacy). Prefer create_business_nodes for scenario-specific labels."""
-        self.data_node_id_map = {}
+        data_node_id_map: Dict[str, str] = {}
         for node_id, node_data in node_data_map.items():
             props = dict(node_data)
             if "uuid" not in props:
                 props["uuid"] = node_id
             neo4j_id = await self.data_provider.create_node("DataNode", props)
-            self.data_node_id_map[node_id] = neo4j_id
-        return self.data_node_id_map
+            data_node_id_map[node_id] = neo4j_id
+        return data_node_id_map
 
     async def create_business_nodes(
         self, specs: Dict[str, Dict]
@@ -64,7 +63,7 @@ class Neo4jGraphManager:
         Returns:
             Mapping of data node uuid to Neo4j node IDs
         """
-        self.data_node_id_map = {}
+        data_node_id_map: Dict[str, str] = {}
         for node_uuid, spec in specs.items():
             spec = dict(spec)
             label = spec.pop("label", None)
@@ -73,8 +72,8 @@ class Neo4jGraphManager:
             if "uuid" not in spec:
                 spec["uuid"] = node_uuid
             neo4j_id = await self.data_provider.create_node(label, spec)
-            self.data_node_id_map[node_uuid] = neo4j_id
-        return self.data_node_id_map
+            data_node_id_map[node_uuid] = neo4j_id
+        return data_node_id_map
 
     async def load_data_nodes_from_neo4j(
         self, uuids: Iterable[str]
@@ -84,10 +83,9 @@ class Neo4jGraphManager:
         then materialize into DataNodes in Neo4j. Only these DataNodes are connected to ComputationNodes.
 
         Flow: find source node by uuid -> get properties -> MERGE DataNode with that data
-        -> return node_data_map (for executor) and data_node_id_map (DataNode neo4j ids for relationships).
+        -> return node_data_map (for executor) and data_node_id_map (optional, e.g. for debug).
         """
         node_data_map: Dict[str, Dict] = {}
-        self.data_node_id_map = {}
         for uuid in uuids:
             # Read from business node (Order, Invoice, etc.) by uuid
             result = await self.data_provider.get_data_node_by_uuid(uuid)
@@ -102,29 +100,28 @@ class Neo4jGraphManager:
             if data_node_uuid_id is None:
                 continue
             node_data_map[uuid] = props
-            self.data_node_id_map[uuid] = data_node_uuid_id
-        return node_data_map, self.data_node_id_map
+        return node_data_map
 
     async def load_graph_data_from_neo4j(
         self,
         graph: ComputationGraph,
-    ) -> Tuple[Dict[str, Dict], Dict[str, str]]:
+    ) -> Dict[str, Dict]:
         """
         Load data nodes for a computation graph from Neo4j by uuid.
         Raises ValueError if any required data nodes are missing in Neo4j.
 
         Returns:
-            (node_data_map, data_node_id_map) for use with ComputationGraphExecutor.
+            node_data_map for use with ComputationGraphExecutor.
         """
         data_node_ids = graph.get_data_node_ids()
-        node_data_map, _ = await self.load_data_nodes_from_neo4j(data_node_ids)
+        node_data_map = await self.load_data_nodes_from_neo4j(data_node_ids)
         missing = set(data_node_ids) - set(node_data_map.keys())
         if missing:
             raise ValueError(
                 f"Missing data nodes in Neo4j for graph: {sorted(missing)}. "
                 "Create business nodes (e.g. via create_business_nodes or seed) before loading."
             )
-        return node_data_map, self.data_node_id_map
+        return node_data_map
 
     async def create_computation_nodes(self, graph: ComputationGraph) -> Dict[str, str]:
         """Create computation nodes in Neo4j
@@ -151,14 +148,16 @@ class Neo4jGraphManager:
         return self.comp_node_id_map
 
     async def create_relationships(self, graph: ComputationGraph):
-        """Create relationships between nodes in Neo4j"""
+        """Create relationships between nodes in Neo4j.
+        DataNode endpoints use uuid (match_by_uuid); ComputationNode use elementId.
+        """
         for rel in graph.computation_relationships.values():
-            source_id = (self.data_node_id_map.get(rel.source_id)
-                        if rel.relation_type == ComputationRelationType.DEPENDS_ON
-                        else self.comp_node_id_map.get(rel.source_id))
-            target_id = (self.comp_node_id_map.get(rel.target_id)
-                        if rel.relation_type == ComputationRelationType.DEPENDS_ON
-                        else self.data_node_id_map.get(rel.target_id))
+            if rel.relation_type == ComputationRelationType.DEPENDS_ON:
+                source_id = rel.source_id  # DataNode uuid
+                target_id = self.comp_node_id_map.get(rel.target_id)
+            else:
+                source_id = self.comp_node_id_map.get(rel.source_id)
+                target_id = rel.target_id  # DataNode uuid
 
             if source_id and target_id:
                 rel_props = {
@@ -186,15 +185,13 @@ class Neo4jGraphManager:
 
     async def write_output_properties(self, node_uuid: str, node_data: Dict,
                                    output_properties: List[str] = None):
-        """Write computed output properties to Neo4j"""
+        """Write computed output properties to Neo4j (matches DataNode by uuid)."""
         if output_properties is None:
             output_properties = OUTPUT_PROPERTIES
-
-        if self.data_node_id_map.get(node_uuid) is not None:
-            output_props = {prop: node_data.get(prop) for prop in output_properties}
-            await self.data_provider.set_node_properties(
-                node_uuid, output_props, match_by_uuid=True
-            )
+        output_props = {prop: node_data.get(prop) for prop in output_properties}
+        await self.data_provider.set_node_properties(
+            node_uuid, output_props, match_by_uuid=True
+        )
 
     async def print_graph_structure(self):
         """Query and print graph structure from Neo4j"""
