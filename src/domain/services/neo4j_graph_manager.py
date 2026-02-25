@@ -43,17 +43,6 @@ class Neo4jGraphManager:
         if self.data_provider:
             await self.data_provider.close()
 
-    async def create_data_nodes(self, node_data_map: Dict[str, Dict]) -> Dict[str, str]:
-        """Create nodes with label DataNode (legacy). Prefer create_business_nodes for scenario-specific labels."""
-        data_node_id_map: Dict[str, str] = {}
-        for node_id, node_data in node_data_map.items():
-            props = dict(node_data)
-            if "uuid" not in props:
-                props["uuid"] = node_id
-            neo4j_id = await self.data_provider.create_node("DataNode", props)
-            data_node_id_map[node_id] = neo4j_id
-        return data_node_id_map
-
     async def create_business_nodes(
         self, specs: Dict[str, Dict]
     ) -> Dict[str, str]:

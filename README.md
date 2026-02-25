@@ -71,13 +71,13 @@
 ### 4.2 Simple Computation Chain (`simple_computation_chain.py`)
 
 - **图结构**：Order（price, quantity）→ calc_subtotal → Invoice（subtotal）；Invoice（subtotal, tax_rate）→ calc_tax → Invoice（tax）。
-- **流程**：上述 1～6；What-If 示例：改 Order 的 price 或 quantity，观察 Invoice 的 subtotal、tax 变化。
+- **流程**：上述 1～5；What-If 示例：改 Order 的 price 或 quantity，观察 Invoice 的 subtotal、tax 变化。
 - **预置数据**：可先运行 `simple_computation_seed_neo4j_data.py`（可选 `--clear`）在 Neo4j 中创建 Order、Invoice 业务节点。
 
 ### 4.3 Supply Chain Delay (`supply_chain_delay_demo.py`)
 
 - **图结构**：Shipment（planned_delivery_days, actual_delivery_days）→ calc_delay_days → Shipment（delay_days）；Shipment（delay_days）+ ProductionPlan（planned_start_days）→ calc_actual_start_days → ProductionPlan（actual_start_days）；ProductionPlan → calc_production_ready_days → Product（production_ready_days）。
-- **流程**：同上 1～6；Step 4 会打印 Neo4j 可视化 Cypher；Step 7 用 `run_scenario` 做 What-If（交付延迟），返回 baseline/scenario/diff。
+- **流程**：同上 1～5；Step 4 会打印 Neo4j 可视化 Cypher；Step 5 用 `run_scenario` 做 What-If（交付延迟），返回 baseline/scenario/diff。
 
 ### 4.4 Supply Chain Rich (`supply_chain_rich_demo.py`)
 
@@ -85,15 +85,10 @@
 - **数据**：纯内存 `node_data_map`，不依赖 Neo4j 预置数据；可选将图同步到 Neo4j 并打印可视化 Cypher。
 - **流程**：构建图与初始数据 → 基线执行 → 多组 `run_scenario`（交付延迟、缓冲调整、承诺日、多属性）→ 可选连接 Neo4j、`ensure_data_nodes_from_map` + 创建计算节点与关系 + 打印可视化说明。
 
-### 4.5 Multi-Relation (`multi_relation_demo.py`)
-
-- **图结构**：同一 Product 节点通过多条 DEPENDS_ON/OUTPUT_TO 连接多个计算节点：calc_total → total_output；calc_discount → price_after_discount；calc_tax → final_price。
-- **流程**：从 Neo4j 读 Product → 用 `ComputationGraphExecutor` 在内存执行；What-If 时修改数据节点属性（如 price、quantity）后重跑，观察 total_output、price_after_discount、final_price 等传导。
-
-### 4.6 种子数据脚本
+### 4.5 种子数据脚本
 
 - **simple_computation_seed_neo4j_data.py**：在 Neo4j 中预创建 Order、Invoice（按 uuid）；支持 `--clear` 先按 uuid 删除再建。
-- **supply_chain_seed_neo4j_data.py**：为供应链 Demo 预创建 Shipment、ProductionPlan、Product 等业务节点（若存在类似脚本）。
+- **supply_chain_seed_neo4j_data.py**：为 supply_chain_delay_demo 预创建 Shipment、ProductionPlan、Product 等业务节点；支持 `--clear` 先按 uuid 删除再建。
 
 ---
 
@@ -142,7 +137,6 @@
   PYTHONPATH=src python examples/simple_computation_chain.py
   PYTHONPATH=src python examples/supply_chain_delay_demo.py              # 需 Neo4j 已起且有种子数据
   PYTHONPATH=src python examples/supply_chain_rich_demo.py               # 可无 Neo4j，纯内存运行
-  PYTHONPATH=src python examples/multi_relation_demo.py
   ```
 
 ---
@@ -154,7 +148,7 @@
 | 图模型 | `src/domain/models/computation_graph.py`、`computation_node.py`、`computation_relationship.py`、`io_spec.py` |
 | 执行 | `src/domain/services/computation_graph_executor.py` |
 | Neo4j 与 What-If | `src/domain/services/neo4j_graph_manager.py`、`what_if_simulator.py` |
-| 示例 | `examples/simple_computation_chain.py`、`examples/supply_chain_delay_demo.py`、`examples/supply_chain_rich_demo.py`、`examples/multi_relation_demo.py` |
+| 示例 | `examples/simple_computation_chain.py`、`examples/supply_chain_delay_demo.py`、`examples/supply_chain_rich_demo.py` |
 | 设计/差距说明 | `docs/whatif_图数据库分析_差距与完善.md`、`.cursor/plans/项目运作说明_c434e5bb.plan.md` |
 
 ---
