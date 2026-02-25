@@ -44,12 +44,11 @@ Supply Chain Rich Demo — 扩展的供应链延迟与惩罚计算
 
 7. 延迟严重程度 (delay_severity) — Shipment，priority=1
    - 公式：1 if delay_days > 10 else 0
-   - 含义：延迟超过 10 天记为严重（1），否则为 0。与 delay_notification_flag 同层依赖 delay_days，
-     靠 priority 决定先算 severity 再算 notification。
+   - 含义：延迟超过 10 天记为严重（1），否则为 0。先于 delay_notification_flag 计算。
 
-8. 延迟通知标志 (delay_notification_flag) — Shipment，priority=2
-   - 公式：1 if delay_days > 0 else 0
-   - 含义：只要延迟就需通知（1），否则 0。与 delay_severity 同层，priority=2 保证在 severity 之后执行。
+8. 延迟通知标志 (delay_notification_flag) — Shipment
+   - 公式：1 if delay_severity == 1 else 0（即由 delay_severity 决定）
+   - 含义：一旦 delay_severity 为 1，则 delay_notification_flag 为 1；依赖 delay_severity，计算上必须在 calc_delay_severity 之后执行（拓扑依赖，非仅优先级）。
 
 9. 发运风险分 (risk_score) — Shipment，priority=3
    - 公式：delay_severity + delay_notification_flag
@@ -231,7 +230,20 @@ def build_rich_supply_chain_graph() -> ComputationGraph:
         engine=ComputationEngine.PYTHON,
         priority=2,
     )
-    # 7. 延迟严重程度（>10 天为 1）；与 8 同层依赖 delay_days，priority 小先执行
+    
+    # 7. 延迟通知标志：依赖 delay_severity，severity 为 1 则 notification 为 1（显式先后依赖）
+    calc_delay_notification = ComputationNode(
+        id="calc_delay_notification",
+        name="delay_notification_flag",
+        level=ComputationLevel.PROPERTY,
+        inputs=(delay_severity_in,),
+        outputs=(delay_notification_out,),
+        code="1 if delay_severity == 1 else 0",
+        engine=ComputationEngine.PYTHON,
+        priority=0,
+    )
+    
+    # 8. 延迟严重程度（>10 天为 1）；先于 delay_notification 计算
     calc_delay_severity = ComputationNode(
         id="calc_delay_severity",
         name="delay_severity",
@@ -242,17 +254,7 @@ def build_rich_supply_chain_graph() -> ComputationGraph:
         engine=ComputationEngine.PYTHON,
         priority=1,
     )
-    # 8. 延迟通知标志（>0 天为 1）；priority=2
-    calc_delay_notification = ComputationNode(
-        id="calc_delay_notification",
-        name="delay_notification_flag",
-        level=ComputationLevel.PROPERTY,
-        inputs=(delay_days_in,),
-        outputs=(delay_notification_out,),
-        code="1 if delay_days > 0 else 0",
-        engine=ComputationEngine.PYTHON,
-        priority=2,
-    )
+    
     # 9. 发运风险分 = severity + notification；priority=3 必须在 7、8 之后
     calc_risk_score = ComputationNode(
         id="calc_risk_score",
@@ -327,13 +329,13 @@ def build_rich_supply_chain_graph() -> ComputationGraph:
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=quantity_in),
         ComputationRelationship("r_penalty_to_prod", "calc_delay_penalty", "product_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=delay_penalty_out),
-        # 依赖优先级的 Shipment 节点：delay_severity(1), delay_notification(2), risk_score(3)
+        # Shipment：delay_severity 依赖 delay_days；delay_notification 依赖 delay_severity（显式先后）
         ComputationRelationship("r_delay_to_severity", "shipment_001", "calc_delay_severity",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_days_in),
         ComputationRelationship("r_severity_to_ship", "calc_delay_severity", "shipment_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=delay_severity_out),
-        ComputationRelationship("r_delay_to_notif", "shipment_001", "calc_delay_notification",
-            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_days_in),
+        ComputationRelationship("r_severity_to_notif", "shipment_001", "calc_delay_notification",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=delay_severity_in),
         ComputationRelationship("r_notif_to_ship", "calc_delay_notification", "shipment_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=delay_notification_out),
         ComputationRelationship("r_severity_to_risk", "shipment_001", "calc_risk_score",
@@ -440,6 +442,15 @@ async def main() -> None:
     print()
 
     simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager())
+    
+    # Scenario 0: 交付延迟 1 天
+    print_header("Step 0: What-If — 交付延迟 1 天")
+    r0 = await simulator.run_scenario(
+        [("shipment_001", "actual_delivery_days", 101)],
+        title="交付延迟 1 天",
+    )
+    print_diff_summary(r0, "交付延迟 1 天")
+    print()
 
     # Scenario 1: 交付延迟 10 天
     print_header("Step 2: What-If — 物料交付延迟 10 天")
