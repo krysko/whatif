@@ -144,6 +144,8 @@ class WhatIfSimulator:
         self,
         property_changes: List[Tuple[str, str, Any]],
         title: str = "Scenario",
+        *,
+        verbose: bool = False,
     ) -> ScenarioRunResult:
         """
         Run one scenario in isolation: apply the given property changes, re-execute, then restore executor state.
@@ -152,6 +154,7 @@ class WhatIfSimulator:
         Args:
             property_changes: List of (node_id, property_name, new_value) to apply for this run.
             title: Optional title for optional console summary of the diff.
+            verbose: If True, log the computation process (each node execution and result) during scenario run.
 
         Returns:
             ScenarioRunResult with baseline (state before scenario), scenario (state after execute),
@@ -162,7 +165,9 @@ class WhatIfSimulator:
         try:
             for node_id, property_name, new_value in property_changes:
                 self.executor.update_node_property(node_id, property_name, new_value)
-            self.executor.execute(verbose=False)
+            if verbose:
+                logger.info("[What-If] 计算过程:")
+            self.executor.execute(verbose=verbose)
             scenario = self.executor.get_all_data_nodes()
             diff = _compute_diff(baseline, scenario)
             overrides = _property_changes_to_overrides(property_changes)

@@ -262,8 +262,9 @@ class Neo4jDataProvider(DataProvider):
 
         for key, val in properties.items():
             if isinstance(val, str):
-                # String values need single quotes in a Cypher literal
-                prop_parts.append(f"`{key}`: '{val}'")
+                # String values: escape single quotes for Cypher (double the quote)
+                escaped = val.replace("\\", "\\\\").replace("'", "\\'")
+                prop_parts.append(f"`{key}`: '{escaped}'")
             elif isinstance(val, (int, float)):
                 # Numbers don't need quotes
                 prop_parts.append(f"`{key}`: {val}")

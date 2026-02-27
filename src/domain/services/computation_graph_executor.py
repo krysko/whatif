@@ -6,6 +6,7 @@ Handles computation graph execution using NetworkX.
 
 import copy
 import logging
+from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 import networkx as nx
 
@@ -114,10 +115,11 @@ class ComputationGraphExecutor:
         for predecessor in self.G.predecessors(node_id):
             variables.update(self.G.nodes[predecessor])
 
-        # Execute computation
+        # Execute computation (inject datetime/timedelta for date expressions)
         code = node_data.get("code", "")
+        safe_globals = {"datetime": datetime, "timedelta": timedelta}
         try:
-            result = eval(code, {}, variables)
+            result = eval(code, safe_globals, variables)
             if verbose:
                 logger.info("  Result: %s", result)
 
