@@ -1,15 +1,14 @@
 """
 认证与物料到货、工序完成时间计算图 Demo
 
-计算逻辑（与 build_certifies_node_data 中数据对应）；全部为日期计算，输出 ISO 日期时间字符串：
-- 若未完成认证：认证完成时间 = 认证开始时间 + timedelta(供应商认证周期)
-- 所需物料到货时间 = 认证完成时间 + timedelta(采购周期)
-- 子工序开始时间 = max(该工序所需物料到货时间, 前序工序完成时间)（首工序无前序则仅物料到货时间）
-- 子工序完成时间 = 子工序开始时间 + 子工序工期
-- 先序子工序：完成时间 = 计划开始时间(startTime) + 工作周期(workCalendarDay)；后序子工序：完成时间 = max(物料到货时间, 前序完成时间) + 工作周期；工序先后由计算图显式依赖表达，不依赖数据节点
-- 工序完成时间 = max(所有子工序完成时间)
+业务逻辑（影响周期 = 物料可用时间）：
+1. 先检查物料与采购认证供应商记录：若没有认证记录或未完成认证，影响周期要加上该物料的供应商认证周期（认证完成时间 = 认证开始时间 + 认证周期）；若已有认证则认证完成时间 = 认证开始时间。
+2. 再检查是否已有采购订单：
+   - 若无订单：物料可用时间 = 认证完成时间 + 采购周期。
+   - 若有订单：计算订单数量 + 仓库库存。若不足需求则物料可用时间 = 认证完成时间 + 采购周期；若足够则物料可用时间 = 最早能满足需求的订单到货时间。
+3. 子工序/工序完成时间：先序 startTime+工期，后序 max(物料可用时间, 前序完成时间)+工期，工序完成 = max(各子工序完成时间)。
 
-流程：内存 node_data_map + 计算图 -> 执行 -> 同步到 Neo4j 可视化 -> 可选 What-If（认证周期/采购周期/工期变化）。
+计算图输出均为 ISO 日期时间字符串。流程：内存 node_data_map + 计算图 -> 执行 -> 同步到 Neo4j 可视化 -> 可选 What-If。
 """
 
 import asyncio
@@ -66,17 +65,23 @@ def print_header(title: str, width: int = 60) -> None:
 
 def build_certifies_computation_graph() -> ComputationGraph:
     """
-    构建认证/物料/工序计算图。
-    - 认证完成时间 = 认证开始时间 + timedelta(供应商认证周期天)
-    - 物料到货时间 = 认证完成时间 + timedelta(采购周期天)
-    - 子工序：依赖物料时按物料到货/前序完成+工期；不依赖时 startTime+工期；均为日期+timedelta
-    - 工序完成时间 = max(各子工序完成时间)；输出均为 ISO 日期时间字符串
+    构建认证/物料/工序计算图（按业务逻辑：先认证影响、再订单+库存决定物料可用时间）。
+    - 认证：无记录或未完成认证则认证完成时间 = 开始时间 + 认证周期，否则 = 开始时间。
+    - 物料可用：无订单或订单+库存不足则 = 认证完成 + 采购周期；否则 = 最早满足需求的订单到货时间。
+    - 子工序/工序完成时间同前。输出均为 ISO 日期时间字符串。
     """
-    # InputSpecs（认证开始时间用 reqCertificationStartTime，不另加字段）
+    # InputSpecs
     certification_start_time = InputSpec("property", "Certifies", "reqCertificationStartTime")
     certification_cycle = InputSpec("property", "MPart", "supplierCertificationCycleLt")
+    has_certification_record = InputSpec("property", "Certifies", "hasCertificationRecord")
+    is_certified = InputSpec("property", "Certifies", "isCertified")
     certification_completion_in = InputSpec("property", "Certifies", "certification_completion_time")
     purchase_cycle = InputSpec("property", "MPart", "purchaseCycleLt")
+    has_purchase_orders = InputSpec("property", "MPart", "hasPurchaseOrders")
+    total_order_quantity = InputSpec("property", "MPart", "totalOrderQuantity")
+    warehouse_inventory = InputSpec("property", "MPart", "warehouseInventory")
+    required_quantity = InputSpec("property", "MPart", "requiredQuantity")
+    earliest_delivery_time = InputSpec("property", "MPart", "earliestDeliveryTime")
     material_arrival_in = InputSpec("property", "MPart", "material_arrival_time")
     work_calendar_day_001 = InputSpec("property", "AOProcedures", "workCalendarDay")
     work_calendar_day_002 = InputSpec("property", "AOProcedures", "workCalendarDay")
@@ -91,25 +96,33 @@ def build_certifies_computation_graph() -> ComputationGraph:
     op002_completion_out = OutputSpec("property", "AOProcedures", "op002_completion_time")
     process_completion_out = OutputSpec("property", "VehicleBatch", "process_completion_time")
 
-    # 1. 认证完成时间 = 认证开始时间 + 供应商认证周期（日期 + timedelta）
+    # 1. 认证完成时间：无认证记录或未完成认证则 开始时间+认证周期，否则 开始时间
     calc_certification_completion = ComputationNode(
         id="calc_certification_completion_time",
         name="certification_completion_time",
         level=ComputationLevel.PROPERTY,
-        inputs=(certification_start_time, certification_cycle),
+        inputs=(certification_start_time, certification_cycle, has_certification_record, is_certified),
         outputs=(certification_completion_out,),
-        code="(datetime.fromisoformat(reqCertificationStartTime.replace('Z','+00:00')) + timedelta(days=supplierCertificationCycleLt)).isoformat()",
+        code="(datetime.fromisoformat(reqCertificationStartTime.replace('Z','+00:00')) + timedelta(days=supplierCertificationCycleLt)).isoformat() if not ((hasCertificationRecord or False) and (isCertified or False)) else datetime.fromisoformat(reqCertificationStartTime.replace('Z','+00:00')).isoformat()",
         engine=ComputationEngine.PYTHON,
         priority=0,
     )
-    # 2. 物料到货时间 = 认证完成时间 + 采购周期（日期 + timedelta）
+    # 2. 物料可用时间：无订单或订单+库存不足则 认证完成+采购周期；否则 最早满足需求的订单到货时间
     calc_material_arrival = ComputationNode(
         id="calc_material_arrival_time",
         name="material_arrival_time",
         level=ComputationLevel.PROPERTY,
-        inputs=(certification_completion_in, purchase_cycle),
+        inputs=(
+            certification_completion_in,
+            purchase_cycle,
+            has_purchase_orders,
+            total_order_quantity,
+            warehouse_inventory,
+            required_quantity,
+            earliest_delivery_time,
+        ),
         outputs=(material_arrival_out,),
-        code="(datetime.fromisoformat(certification_completion_time.replace('Z','+00:00')) + timedelta(days=purchaseCycleLt)).isoformat()",
+        code="(datetime.fromisoformat(certification_completion_time.replace('Z','+00:00')) + timedelta(days=purchaseCycleLt)).isoformat() if (not (hasPurchaseOrders or False)) or ((totalOrderQuantity or 0) + (warehouseInventory or 0)) < (requiredQuantity or 1) or not ((earliestDeliveryTime or '') and str(earliestDeliveryTime or '').strip()) else str(earliestDeliveryTime or '').strip()",
         engine=ComputationEngine.PYTHON,
         priority=0,
     )
@@ -159,10 +172,18 @@ def build_certifies_computation_graph() -> ComputationGraph:
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=certification_cycle
         ),
         ComputationRelationship(
+            "rel_has_cert_record_to_calc", "Certifies_DataNode_001", "calc_certification_completion_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=has_certification_record
+        ),
+        ComputationRelationship(
+            "rel_is_certified_to_calc", "Certifies_DataNode_001", "calc_certification_completion_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=is_certified
+        ),
+        ComputationRelationship(
             "rel_calc_to_certifies", "calc_certification_completion_time", "Certifies_DataNode_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=certification_completion_out
         ),
-        # Certifies, MPart -> calc_material_arrival
+        # Certifies, MPart -> calc_material_arrival（物料可用时间：认证完成 + 订单/库存逻辑）
         ComputationRelationship(
             "rel_cert_completion_to_material", "Certifies_DataNode_001", "calc_material_arrival_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=certification_completion_in
@@ -170,6 +191,26 @@ def build_certifies_computation_graph() -> ComputationGraph:
         ComputationRelationship(
             "rel_purchase_to_material", "MPart_DataNode_001", "calc_material_arrival_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=purchase_cycle
+        ),
+        ComputationRelationship(
+            "rel_has_orders_to_material", "MPart_DataNode_001", "calc_material_arrival_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=has_purchase_orders
+        ),
+        ComputationRelationship(
+            "rel_total_order_qty_to_material", "MPart_DataNode_001", "calc_material_arrival_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=total_order_quantity
+        ),
+        ComputationRelationship(
+            "rel_warehouse_inv_to_material", "MPart_DataNode_001", "calc_material_arrival_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=warehouse_inventory
+        ),
+        ComputationRelationship(
+            "rel_required_qty_to_material", "MPart_DataNode_001", "calc_material_arrival_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=required_quantity
+        ),
+        ComputationRelationship(
+            "rel_earliest_delivery_to_material", "MPart_DataNode_001", "calc_material_arrival_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=earliest_delivery_time
         ),
         ComputationRelationship(
             "rel_material_to_mpart", "calc_material_arrival_time", "MPart_DataNode_001",
