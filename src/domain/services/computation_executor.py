@@ -1,6 +1,8 @@
 """
-Data provider for Neo4j: abstract interface and Neo4j implementation.
-Used by Neo4jGraphManager for graph persistence and by demos for read/write.
+Neo4j 数据访问层：抽象 DataProvider 与 Neo4jDataProvider 实现。
+
+供 Neo4jGraphManager 做节点/关系的创建、按 uuid 查询、属性写回等；本模块不包含「图执行」逻辑，
+图执行在 computation_graph_executor 中。
 """
 
 from abc import ABC, abstractmethod

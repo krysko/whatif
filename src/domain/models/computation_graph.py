@@ -1,3 +1,11 @@
+"""
+计算图领域模型：不可变 DAG，由计算节点与关系构成。
+
+- 数据节点（DataNode）由关系中的 source_id/target_id 引用，不在本结构中显式存储。
+- 通过 add_computation_node / add_computation_relationship 链式构建，每次返回新图实例。
+- get_data_node_ids / get_output_properties_by_data_node 供执行器与 Neo4j 同步使用。
+"""
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Set, Tuple
 
@@ -8,7 +16,7 @@ from .computation_relation_type import ComputationRelationType
 
 @dataclass(frozen=True, slots=True)
 class ComputationGraph:
-    """Represents a computation graph with computation nodes and relationships"""
+    """不可变计算图：计算节点 + 关系（DEPENDS_ON / OUTPUT_TO），outgoing/incoming 为关系索引。"""
     id: str
     computation_nodes: Mapping[str, ComputationNode] = field(default_factory=dict)
     computation_relationships: Mapping[str, ComputationRelationship] = field(default_factory=dict)
@@ -47,9 +55,7 @@ class ComputationGraph:
         return tuple(self.computation_nodes[nid] for nid in target_ids if nid in self.computation_nodes)
 
     def get_data_node_ids(self) -> Set[str]:
-        """Collect uuid of data nodes referenced by this computation graph.
-        Data nodes are DEPENDS_ON sources and OUTPUT_TO targets, excluding computation node IDs.
-        """
+        """收集图中引用的数据节点 ID 集合（DEPENDS_ON 的 source、OUTPUT_TO 的 target，排除计算节点 ID）。"""
         candidate_ids: Set[str] = set()
         for rel in self.computation_relationships.values():
             if rel.relation_type.value == "depends_on":
@@ -59,10 +65,7 @@ class ComputationGraph:
         return candidate_ids - set(self.computation_nodes.keys())
 
     def get_output_properties_by_data_node(self) -> Dict[str, List[str]]:
-        """Derive output property names per data node from OUTPUT_TO relationships.
-        Only relationships whose target_id is a data node (not a computation node) are considered.
-        Returns dict mapping data node id -> list of property names to write back.
-        """
+        """从 OUTPUT_TO 关系推导每个数据节点要写回 Neo4j 的属性名；仅统计 target 为数据节点的关系。"""
         comp_ids = set(self.computation_nodes.keys())
         out: Dict[str, List[str]] = {}
         for rel in self.computation_relationships.values():
@@ -78,7 +81,7 @@ class ComputationGraph:
         return out
 
     def add_computation_node(self, node: ComputationNode) -> 'ComputationGraph':
-        """Add a computation node and return a new ComputationGraph"""
+        """添加一个计算节点，返回新图（本图不可变）。"""
         new_nodes = {**self.computation_nodes, node.id: node}
         return ComputationGraph(
             id=self.id,
@@ -90,7 +93,7 @@ class ComputationGraph:
         )
 
     def add_computation_relationship(self, relationship: ComputationRelationship) -> 'ComputationGraph':
-        """Add a computation relationship and return a new ComputationGraph"""
+        """添加一条计算关系，并更新 outgoing/incoming 索引，返回新图。"""
         new_relationships = {**self.computation_relationships, relationship.id: relationship}
 
         # Update outgoing

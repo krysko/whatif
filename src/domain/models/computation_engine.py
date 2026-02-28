@@ -1,3 +1,5 @@
+"""计算引擎枚举：当前执行器仅使用 PYTHON（eval）。"""
+
 from enum import Enum
 
 

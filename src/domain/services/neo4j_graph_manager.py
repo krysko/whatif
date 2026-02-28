@@ -1,7 +1,9 @@
 """
-Neo4j Graph Manager
+Neo4j 图管理：业务节点创建、按 uuid/映射加载数据、计算图同步与可视化 Cypher。
 
-Manages Neo4j graph operations for computation graphs.
+- create_business_nodes：按规格创建业务节点（Order、Shipment 等），供 seed 脚本使用。
+- load_graph_data_from_neo4j：按计算图所需数据节点 ID（或 data_node_id_to_neo4j_uuid 映射）从 Neo4j 拉取属性，得到 node_data_map。
+- sync_graph_to_neo4j：将数据节点 + 计算节点 + 关系写入 Neo4j，便于 Browser 可视化；clear_graph_from_neo4j 用于清理。
 """
 
 import logging
@@ -185,6 +187,33 @@ class Neo4jGraphManager:
         await self.create_computation_nodes(graph)
         await self.create_relationships(graph)
         return node_data_map
+
+    async def clear_graph_from_neo4j(self, graph: ComputationGraph) -> None:
+        """
+        删除 Neo4j 中该计算图对应的 DataNode 与 ComputationNode 及其关系。
+        程序结束时调用，便于下次运行前图状态干净。
+        """
+        if not self.data_provider:
+            return
+        driver = self.data_provider._get_driver()
+        if not driver:
+            return
+        data_uuids = list(graph.get_data_node_ids())
+        graph_id = graph.id
+        async with driver.session() as session:
+            if data_uuids:
+                result = await session.run(
+                    "MATCH (n:DataNode) WHERE n.uuid IN $uuids DETACH DELETE n",
+                    uuids=data_uuids,
+                )
+                await result.consume()
+                logger.info("Cleared DataNodes (uuids): %s", data_uuids)
+            result = await session.run(
+                "MATCH (n:ComputationNode) WHERE n.graph_id = $graph_id DETACH DELETE n",
+                graph_id=graph_id,
+            )
+            await result.consume()
+            logger.info("Cleared ComputationNodes (graph_id=%s)", graph_id)
 
     async def ensure_data_nodes_from_map(
         self,

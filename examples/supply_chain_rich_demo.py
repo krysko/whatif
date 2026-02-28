@@ -73,9 +73,13 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
-src_path = Path(__file__).parent.parent / "src"
+_root = Path(__file__).parent.parent
+src_path = _root / "src"
 sys.path.insert(0, str(src_path))
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
 
+from examples.demo_utils import MockNeo4jManager, print_header
 from domain.models import (
     ComputationEngine,
     ComputationGraph,
@@ -94,11 +98,6 @@ from domain.services import (
     format_scenario_result,
 )
 
-
-class _MockNeo4jManager:
-    """本 demo 不连接 Neo4j，仅占位。"""
-    pass
-
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -110,13 +109,6 @@ NEO4J_PASSWORD = "123456789"
 # ============================================================================
 # Display
 # ============================================================================
-
-def print_header(title: str, width: int = 60) -> None:
-    logger.info("=" * width)
-    logger.info(title)
-    logger.info("=" * width)
-    logger.info("")
-
 
 def print_scenario_result(result: ScenarioRunResult, label: str, max_diff: int = 15) -> None:
     """格式化输出 ScenarioRunResult（输入覆盖、受影响节点、关键输出、属性变化、执行状态）。"""
@@ -433,7 +425,7 @@ async def main() -> None:
     neo4j_manager.print_visualization_instructions(graph)
     logger.info("")
 
-    simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager())
+    simulator = WhatIfSimulator(executor, neo4j_manager=MockNeo4jManager())
 
     # Scenario 0: 交付延迟 1 天
     print_header("Step 0: What-If — 交付延迟 1 天")

@@ -1,9 +1,8 @@
 """
-What-If Simulator
+What-If 模拟器：在内存中应用属性变更、重跑计算图并对比结果，不持久化、不修改执行器原始状态。
 
-Handles what-if simulations for computation graphs.
-Provides run_scenario(property_changes, title): run one or more property changes in isolation,
-returns ScenarioRunResult with baseline, scenario, diff and extended fields; does not modify executor memory.
+流程：snapshot -> 对 executor 应用 property_changes -> execute -> 收集 scenario 与 diff -> restore。
+返回 ScenarioRunResult（baseline、scenario、diff、overrides、affected_node_ids、outputs_per_node 等）。
 """
 
 import logging

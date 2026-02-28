@@ -17,6 +17,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import Dict
 
 # 保证可导入 examples.certifies_demo（其内部会补 src 路径）
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,11 +28,147 @@ from examples.certifies_demo import (
     NEO4J_URI,
     NEO4J_PASSWORD,
     NEO4J_USER,
-    build_certifies_node_data,
 )
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# Data: 与计算逻辑对应的节点数据（含认证开始天数等输入）
+# ============================================================================
+
+def build_certifies_node_data() -> Dict[str, Dict]:
+    """与计算图一致的数据节点数据；每条的 uuid 即数据节点 ID（xxx_DataNode_xxx），便于从 Neo4j 按 uuid 加载。"""
+    raw = {
+        "Supplier_DataNode_001": {
+            "id": "S03",
+            "certificationStatus": "已认证",
+            "supplierAddress": "北京市海淀区",
+            "supplierName": "北京科技有限公司",
+            "supplierType": "工装供应商",
+            "type": "Supplier",
+            "uuid": "Supplier_uuid_001",
+            "element_type": "NODE"
+        },
+        "MPart_DataNode_001": {
+            "id": "火花塞",
+            "materialCost": 100.0,
+            "mpartCategory": "采购件",
+            "mpartId": "Part0500",
+            "mpartMaterial": "复合材料",
+            "mpartNit": "个",
+            "mpartSpecification": 305,
+            "purchaseCost": 100.0,
+            "purchaseCycleLt": 30,
+            "sourceMethod": "Buy",
+            "status": "active",
+            "supplierCertificationCycleLt": 30,
+            "type": "MPart",
+            "uuid": "MPart_uuid_001",
+            "element_type": "NODE"
+        },
+        "AOProcedures_DataNode_001": {
+            "id": "AO_OP3001",
+            "apOpCpde": "AO_OP3001",
+            "opName": "汽车-工序B1",
+            "stationName": "A001-工位1",
+            "type": "AOProcedures",
+            "workCalendarDay": 30.0,
+            "uuid": "AOProcedures_uuid_001",
+            "element_type": "NODE"
+        },
+        "AOProcedures_DataNode_002": {
+            "id": "AO_OP3002",
+            "apOpCpde": "AO_OP3002",
+            "opName": "汽车-工序B1",
+            "stationName": "A001-工位1",
+            "type": "AOProcedures",
+            "workCalendarDay": 13.0,
+            "uuid": "AOProcedures_uuid_002",
+            "element_type": "NODE"
+        },
+        "VehicleBatch_DataNode_001": {
+            "id": "C201",
+            "aoId": "AO001",
+            "projectId": "0003",
+            "startTime": "2026-01-24T00:00:01",
+            "status": "进行中",
+            "type": "VehicleBatch",
+            "vehicleBatch": "20",
+            "vehicleModel": "CF02",
+            "uuid": "VehicleBatch_uuid_001",
+            "element_type": "NODE"
+        },
+        "Certifies_DataNode_001": {
+            "id": "0005",
+            "start_id": "MPart_uuid_001",
+            "end_id": "Supplier_uuid_001",
+            "type": "Certifies",
+            "mpartCode": "火花塞",
+            "purchaseShare": "100%",
+            "reqCertificationStartTime": "2025-12-21T00:00:01",
+            "status": "认证中",
+            "supplierCode": "S03",
+            "uuid": "Certifies_uuid_001",
+            "element_type": "EDGE"
+        },
+        "Requires_DataNode_001": {
+            "id": "0005",
+            "aoCode": "P40",
+            "aoOpCode": "AO_OP3002",
+            "start_id": "AOProcedures_uuid_002",
+            "end_id": "MPart_uuid_001",
+            "mPartCode": "火花塞",
+            "requiredQuantity": 1,
+            "type": "Requires",
+            "uuid": "Requires_uuid_001",
+            "element_type": "EDGE"
+        },
+        "MPartStatus_DataNode_001": {
+            "id": "0702",
+            "aoOpCode": "AO_OP3002",
+            "mPartCode": "火花塞",
+            "materialStatus": "未冻结",
+            "process": "汽车-工序B2",
+            "start_id": "VehicleBatch_uuid_001",
+            "end_id": "MPart_uuid_001",
+            "vehicleBatchCode": "C201",
+            "type": "MPartStatus",
+            "uuid": "MPartStatus_uuid_001",
+            "element_type": "EDGE"
+        },
+        "AOProcedureStatus_DataNode_001": {
+            "id": "0602",
+            "aoOpCode": "AO_OP3002",
+            "operationName": "汽车-工序B2",
+            "vehicleBatchCode": "C201",
+            "start_id": "VehicleBatch_uuid_001",
+            "end_id": "AOProcedures_uuid_002",
+            "type": "AOProcedureStatus",
+            "uuid": "AOProcedureStatus_uuid_001",
+            "element_type": "EDGE"
+        },
+        "AOProcedureStatus_DataNode_002": {
+            "id": "0601",
+            "aoOpCode": "AO_OP3001",
+            "operationName": "汽车-工序B1",
+            "vehicleBatchCode": "C201",
+            "start_id": "VehicleBatch_uuid_001",
+            "end_id": "AOProcedures_uuid_001",
+            "type": "AOProcedureStatus",
+            "uuid": "AOProcedureStatus_uuid_002",
+            "element_type": "EDGE"
+        },
+        "HappensAfter_DataNode_001": {
+            "id": "0005",
+            "uuid": "HappensAfter_uuid_001",
+            "type": "HappensAfter",
+            "start_id": "AOProcedures_uuid_001",
+            "end_id": "AOProcedures_uuid_002",
+            "element_type": "EDGE"
+        }
+    }
+    # 每条数据的 uuid 固定为数据节点 ID（xxx_DataNode_xxx），与 Neo4j 中按 uuid 查找一致
+    return raw
 
 async def seed() -> None:
     node_data = build_certifies_node_data()

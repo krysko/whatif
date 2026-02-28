@@ -1,7 +1,9 @@
 """
-Computation Graph Executor
+计算图执行器：基于 NetworkX 的拓扑执行与单节点求值。
 
-Handles computation graph execution using NetworkX.
+流程：将 ComputationGraph + node_data_map 转为有向图 -> 依赖图拓扑排序 -> 按序执行每个计算节点。
+单节点执行：从 DEPENDS_ON 来源收集变量 -> eval(code) -> 按 OUTPUT_TO 写回后继节点。
+支持 snapshot/restore 与 update_node_property，供 What-If 场景在内存中改值后重跑并恢复。
 """
 
 import copy
@@ -19,7 +21,7 @@ from ..models import (
 
 
 class ComputationGraphExecutor:
-    """Handles computation graph execution using NetworkX"""
+    """基于 NetworkX 的计算图执行器：建图、拓扑序执行、单节点 eval、快照/恢复。"""
 
     def __init__(self, graph: ComputationGraph, node_data_map: Dict[str, Dict]):
         self.graph = graph
@@ -27,7 +29,7 @@ class ComputationGraphExecutor:
         self.G = self._build_networkx_graph()
 
     def _build_networkx_graph(self) -> nx.DiGraph:
-        """Build NetworkX graph from ComputationGraph and node data"""
+        """将计算图与数据节点转为 NetworkX 有向图：数据节点带 is_computation=False，计算节点带 code/engine/priority。"""
         G = nx.DiGraph()
 
         # Add data nodes
@@ -89,8 +91,7 @@ class ComputationGraphExecutor:
         return dep_graph
 
     def _get_execution_order(self) -> Optional[List[str]]:
-        """Get topological execution order. When multiple nodes have the same in-degree,
-        order by priority (lower first), then by node id for tie-breaking."""
+        """按依赖图拓扑序得到执行顺序；同层按 priority 升序、再按 node id 稳定排序。若存在环则返回 None。"""
         dep_graph = self._get_dependency_graph()
         try:
             key = lambda n: (self.G.nodes[n].get("priority", 0), n)
@@ -100,7 +101,7 @@ class ComputationGraphExecutor:
             return None
 
     def _execute_node(self, node_id: str, verbose: bool = True) -> Optional[float]:
-        """Execute a single computation node"""
+        """执行单个计算节点：从 DEPENDS_ON 来源收集变量 -> eval(code) -> 按 OUTPUT_TO 写回后继。"""
         node_data = self.G.nodes[node_id]
 
         if not node_data.get("is_computation"):
@@ -148,7 +149,7 @@ class ComputationGraphExecutor:
             return None
 
     def execute(self, verbose: bool = True) -> bool:
-        """Execute all computations in topological order"""
+        """按拓扑序执行全部计算节点；返回是否成功（有环时 False）。"""
         order = self._get_execution_order()
         if order is None:
             return False
@@ -169,9 +170,7 @@ class ComputationGraphExecutor:
             self.G.nodes[node_id][property_name] = value
 
     def snapshot_data_nodes(self) -> Dict[str, Dict]:
-        """Take a deep copy of all data node state for later restore.
-        Use restore_data_nodes(snapshot) after a what-if run to keep original values unchanged.
-        """
+        """深拷贝当前所有数据节点状态，供 What-If 结束后 restore_data_nodes(snapshot) 恢复。"""
         return {
             node_id: copy.deepcopy(dict(data))
             for node_id, data in self.G.nodes(data=True)

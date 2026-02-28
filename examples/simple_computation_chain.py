@@ -17,10 +17,13 @@ from typing import Tuple, Dict
 
 logger = logging.getLogger(__name__)
 
-# Add src to Python path
-src_path = Path(__file__).parent.parent / "src"
+_root = Path(__file__).parent.parent
+src_path = _root / "src"
 sys.path.insert(0, str(src_path))
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
 
+from examples.demo_utils import print_header
 from domain.models import (
     ComputationLevel,
     ComputationEngine,
@@ -48,18 +51,6 @@ NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "123456789"
 OUTPUT_PROPERTIES = ["subtotal", "tax"]
-
-
-# ============================================================================
-# Display Utilities
-# ============================================================================
-
-def print_header(title: str, width: int = 60):
-    """Log section header"""
-    logger.info("=" * width)
-    logger.info(title)
-    logger.info("=" * width)
-    logger.info("")
 
 
 # ============================================================================

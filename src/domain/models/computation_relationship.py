@@ -1,3 +1,10 @@
+"""
+计算关系模型：图中边的类型与绑定。
+
+- DEPENDS_ON：数据/计算节点 -> 计算节点，通过 datasource 指定读取的属性。
+- OUTPUT_TO：计算节点 -> 数据/计算节点，通过 data_output 指定写回的属性。
+"""
+
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -7,7 +14,7 @@ from .io_spec import OutputSpec
 
 @dataclass(frozen=True, slots=True)
 class ComputationRelationship:
-    """Represents a computation relationship (edge) in the computation graph"""
+    """图中一条边：源/目标节点 ID、关系类型、以及可选的 datasource（读）/ data_output（写）绑定。"""
     id: str
     source_id: str  # Source computation node ID
     target_id: str  # Target computation node ID

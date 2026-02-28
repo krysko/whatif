@@ -2,10 +2,10 @@
 认证与物料到货、工序完成时间计算图 Demo
 
 业务逻辑（影响周期 = 物料可用时间）：
-1. 先检查物料与采购认证供应商记录：若没有认证记录或未完成认证，影响周期要加上该物料的供应商认证周期（认证完成时间 = 认证开始时间 + 认证周期）；若已有认证则认证完成时间 = 认证开始时间。
-2. 再检查是否已有采购订单：
+1. 先检查物料与采购认证供应商记录：是否有认证记录取决于关系类型Certifies的status属性，的若没有认证记录或未完成认证，影响周期要加上该物料的供应商认证周期（认证完成时间 = 认证开始时间 + 认证周期）；若已有认证则认证完成时间 = 认证开始时间。
+2. 再检查是否已有采购订单，是否有订单，取决于是否和Supplier类型的节点之间存在PO关系类型
    - 若无订单：物料可用时间 = 认证完成时间 + 采购周期。
-   - 若有订单：计算订单数量 + 仓库库存。若不足需求则物料可用时间 = 认证完成时间 + 采购周期；若足够则物料可用时间 = 最早能满足需求的订单到货时间。
+   - 若有订单：计算订单数量(PO类型的orderQuantity属性) + 仓库库存(通过关系类型HasInventory关联到实体类型MaterialInventory)。若不足需求则物料可用时间 = 认证完成时间 + 采购周期；若足够则物料可用时间 = 最早能满足需求的订单到货时间。
 3. 子工序/工序完成时间：先序 startTime+工期，后序 max(物料可用时间, 前序完成时间)+工期，工序完成 = max(各子工序完成时间)。
 
 计算图输出均为 ISO 日期时间字符串。流程：内存 node_data_map + 计算图 -> 执行 -> 同步到 Neo4j 可视化 -> 可选 What-If。
@@ -18,9 +18,13 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
-src_path = Path(__file__).parent.parent / "src"
+_root = Path(__file__).parent.parent
+src_path = _root / "src"
 sys.path.insert(0, str(src_path))
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
 
+from examples.demo_utils import MockNeo4jManager, print_header
 from domain.models import (
     ComputationEngine,
     ComputationGraph,
@@ -39,25 +43,9 @@ from domain.services import (
 from domain.services.neo4j_graph_manager import Neo4jGraphManager
 
 
-class _MockNeo4jManager(Neo4jGraphManager):
-    """本 demo 不连接 Neo4j，仅占位供 WhatIfSimulator 使用。"""
-    pass
-
-
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
 NEO4J_PASSWORD = "123456789"
-
-# ============================================================================
-# Display
-# ============================================================================
-
-def print_header(title: str, width: int = 60) -> None:
-    logger.info("=" * width)
-    logger.info(title)
-    logger.info("=" * width)
-    logger.info("")
-
 
 # ============================================================================
 # Graph: 认证 -> 物料到货 -> 子工序完成 -> 工序完成时间
@@ -65,18 +53,19 @@ def print_header(title: str, width: int = 60) -> None:
 
 def build_certifies_computation_graph() -> ComputationGraph:
     """
-    构建认证/物料/工序计算图（按业务逻辑：先认证影响、再订单+库存决定物料可用时间）。
-    - 认证：无记录或未完成认证则认证完成时间 = 开始时间 + 认证周期，否则 = 开始时间。
-    - 物料可用：无订单或订单+库存不足则 = 认证完成 + 采购周期；否则 = 最早满足需求的订单到货时间。
-    - 子工序/工序完成时间同前。输出均为 ISO 日期时间字符串。
+    构建认证/物料/工序计算图（与文档业务逻辑一致）。
+    - 认证：由 Certifies.status 判断；status 为「已认证」则认证完成时间 = 开始时间，否则 = 开始时间 + 认证周期。
+    - 物料可用：hasPurchaseOrders（由 MPart 与 Supplier 间是否存在 PO 关系决定）、订单数量（PO.orderQuantity）、
+      仓库库存（HasInventory->MaterialInventory）不足需求则 = 认证完成 + 采购周期；否则 = 最早满足需求的订单到货时间。
+    - 子工序/工序完成时间：先序 startTime+工期，后序 max(物料可用, 前序完成)+工期，工序完成 = max(各子工序)。
     """
-    # InputSpecs
+    # InputSpecs（认证：以 Certifies.status 判断是否已认证）
     certification_start_time = InputSpec("property", "Certifies", "reqCertificationStartTime")
     certification_cycle = InputSpec("property", "MPart", "supplierCertificationCycleLt")
-    has_certification_record = InputSpec("property", "Certifies", "hasCertificationRecord")
-    is_certified = InputSpec("property", "Certifies", "isCertified")
+    certification_status = InputSpec("property", "Certifies", "status")
     certification_completion_in = InputSpec("property", "Certifies", "certification_completion_time")
     purchase_cycle = InputSpec("property", "MPart", "purchaseCycleLt")
+    # 订单/库存：是否有订单由 MPart 与 Supplier 间 PO 关系决定；订单量=PO.orderQuantity，库存=HasInventory->MaterialInventory
     has_purchase_orders = InputSpec("property", "MPart", "hasPurchaseOrders")
     total_order_quantity = InputSpec("property", "MPart", "totalOrderQuantity")
     warehouse_inventory = InputSpec("property", "MPart", "warehouseInventory")
@@ -96,14 +85,14 @@ def build_certifies_computation_graph() -> ComputationGraph:
     op002_completion_out = OutputSpec("property", "AOProcedures", "op002_completion_time")
     process_completion_out = OutputSpec("property", "VehicleBatch", "process_completion_time")
 
-    # 1. 认证完成时间：无认证记录或未完成认证则 开始时间+认证周期，否则 开始时间
+    # 1. 认证完成时间：由 Certifies.status 判断，status 为「已认证」则 = 开始时间，否则 = 开始时间 + 认证周期
     calc_certification_completion = ComputationNode(
         id="calc_certification_completion_time",
         name="certification_completion_time",
         level=ComputationLevel.PROPERTY,
-        inputs=(certification_start_time, certification_cycle, has_certification_record, is_certified),
+        inputs=(certification_start_time, certification_cycle, certification_status),
         outputs=(certification_completion_out,),
-        code="(datetime.fromisoformat(reqCertificationStartTime.replace('Z','+00:00')) + timedelta(days=supplierCertificationCycleLt)).isoformat() if not ((hasCertificationRecord or False) and (isCertified or False)) else datetime.fromisoformat(reqCertificationStartTime.replace('Z','+00:00')).isoformat()",
+        code="(datetime.fromisoformat(reqCertificationStartTime.replace('Z','+00:00')) + timedelta(days=supplierCertificationCycleLt)).isoformat() if (status or '').strip() != '已认证' else datetime.fromisoformat(reqCertificationStartTime.replace('Z','+00:00')).isoformat()",
         engine=ComputationEngine.PYTHON,
         priority=0,
     )
@@ -172,12 +161,8 @@ def build_certifies_computation_graph() -> ComputationGraph:
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=certification_cycle
         ),
         ComputationRelationship(
-            "rel_has_cert_record_to_calc", "Certifies_DataNode_001", "calc_certification_completion_time",
-            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=has_certification_record
-        ),
-        ComputationRelationship(
-            "rel_is_certified_to_calc", "Certifies_DataNode_001", "calc_certification_completion_time",
-            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=is_certified
+            "rel_cert_status_to_calc", "Certifies_DataNode_001", "calc_certification_completion_time",
+            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=certification_status
         ),
         ComputationRelationship(
             "rel_calc_to_certifies", "calc_certification_completion_time", "Certifies_DataNode_001",
@@ -275,144 +260,6 @@ def build_certifies_computation_graph() -> ComputationGraph:
     return graph
 
 
-# ============================================================================
-# Data: 与计算逻辑对应的节点数据（含认证开始天数等输入）
-# ============================================================================
-
-def build_certifies_node_data() -> Dict[str, Dict]:
-    """与计算图一致的数据节点数据；每条的 uuid 即数据节点 ID（xxx_DataNode_xxx），便于从 Neo4j 按 uuid 加载。"""
-    raw = {
-        "Supplier_DataNode_001": {
-            "id": "S03",
-            "certificationStatus": "已认证",
-            "supplierAddress": "北京市海淀区",
-            "supplierName": "北京科技有限公司",
-            "supplierType": "工装供应商",
-            "type": "Supplier",
-            "uuid": "Supplier_uuid_001",
-            "element_type": "NODE"
-        },
-        "MPart_DataNode_001": {
-            "id": "火花塞",
-            "materialCost": 100.0,
-            "mpartCategory": "采购件",
-            "mpartId": "Part0500",
-            "mpartMaterial": "复合材料",
-            "mpartNit": "个",
-            "mpartSpecification": 305,
-            "purchaseCost": 100.0,
-            "purchaseCycleLt": 30,
-            "sourceMethod": "Buy",
-            "status": "active",
-            "supplierCertificationCycleLt": 30,
-            "type": "MPart",
-            "uuid": "MPart_uuid_001",
-            "element_type": "NODE"
-        },
-        "AOProcedures_DataNode_001": {
-            "id": "AO_OP3001",
-            "apOpCpde": "AO_OP3001",
-            "opName": "汽车-工序B1",
-            "stationName": "A001-工位1",
-            "type": "AOProcedures",
-            "workCalendarDay": 30.0,
-            "uuid": "AOProcedures_uuid_001",
-            "element_type": "NODE"
-        },
-        "AOProcedures_DataNode_002": {
-            "id": "AO_OP3002",
-            "apOpCpde": "AO_OP3002",
-            "opName": "汽车-工序B1",
-            "stationName": "A001-工位1",
-            "type": "AOProcedures",
-            "workCalendarDay": 13.0,
-            "uuid": "AOProcedures_uuid_002",
-            "element_type": "NODE"
-        },
-        "VehicleBatch_DataNode_001": {
-            "id": "C201",
-            "aoId": "AO001",
-            "projectId": "0003",
-            "startTime": "2026-01-24T00:00:01",
-            "status": "进行中",
-            "type": "VehicleBatch",
-            "vehicleBatch": "20",
-            "vehicleModel": "CF02",
-            "uuid": "VehicleBatch_uuid_001",
-            "element_type": "NODE"
-        },
-        "Certifies_DataNode_001": {
-            "id": "0005",
-            "start_id": "MPart_uuid_001",
-            "end_id": "Supplier_uuid_001",
-            "type": "Certifies",
-            "mpartCode": "火花塞",
-            "purchaseShare": "100%",
-            "reqCertificationStartTime": "2025-12-21T00:00:01",
-            "status": "认证中",
-            "supplierCode": "S03",
-            "uuid": "Certifies_uuid_001",
-            "element_type": "EDGE"
-        },
-        "Requires_DataNode_001": {
-            "id": "0005",
-            "aoCode": "P40",
-            "aoOpCode": "AO_OP3002",
-            "start_id": "AOProcedures_uuid_002",
-            "end_id": "MPart_uuid_001",
-            "mPartCode": "火花塞",
-            "requiredQuantity": 1,
-            "type": "Requires",
-            "uuid": "Requires_uuid_001",
-            "element_type": "EDGE"
-        },
-        "MPartStatus_DataNode_001": {
-            "id": "0702",
-            "aoOpCode": "AO_OP3002",
-            "mPartCode": "火花塞",
-            "materialStatus": "未冻结",
-            "process": "汽车-工序B2",
-            "start_id": "VehicleBatch_uuid_001",
-            "end_id": "MPart_uuid_001",
-            "vehicleBatchCode": "C201",
-            "type": "MPartStatus",
-            "uuid": "MPartStatus_uuid_001",
-            "element_type": "EDGE"
-        },
-        "AOProcedureStatus_DataNode_001": {
-            "id": "0602",
-            "aoOpCode": "AO_OP3002",
-            "operationName": "汽车-工序B2",
-            "vehicleBatchCode": "C201",
-            "start_id": "VehicleBatch_uuid_001",
-            "end_id": "AOProcedures_uuid_002",
-            "type": "AOProcedureStatus",
-            "uuid": "AOProcedureStatus_uuid_001",
-            "element_type": "EDGE"
-        },
-        "AOProcedureStatus_DataNode_002": {
-            "id": "0601",
-            "aoOpCode": "AO_OP3001",
-            "operationName": "汽车-工序B1",
-            "vehicleBatchCode": "C201",
-            "start_id": "VehicleBatch_uuid_001",
-            "end_id": "AOProcedures_uuid_001",
-            "type": "AOProcedureStatus",
-            "uuid": "AOProcedureStatus_uuid_002",
-            "element_type": "EDGE"
-        },
-        "HappensAfter_DataNode_001": {
-            "id": "0005",
-            "uuid": "HappensAfter_uuid_001",
-            "type": "HappensAfter",
-            "start_id": "AOProcedures_uuid_001",
-            "end_id": "AOProcedures_uuid_002",
-            "element_type": "EDGE"
-        }
-    }
-    # 每条数据的 uuid 固定为数据节点 ID（xxx_DataNode_xxx），与 Neo4j 中按 uuid 查找一致
-    return raw
-
 def get_graph_datanode_uuids() -> Dict[str, str]:
     # DataNode和具体数据节点uuid的映射
     return {
@@ -441,7 +288,7 @@ async def main() -> None:
     logger.info("")
 
     graph = build_certifies_computation_graph()
-    neo4j_manager: Neo4jGraphManager = _MockNeo4jManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    neo4j_manager: Neo4jGraphManager = MockNeo4jManager()
     node_data_map: Dict[str, Dict]
 
     # 优先从 Neo4j 按 get_graph_datanode_uuids 映射加载数据节点属性；失败则使用内存数据
@@ -456,9 +303,9 @@ async def main() -> None:
         neo4j_manager = _manager
         logger.info("已从 Neo4j 加载 %s 个数据节点", len(node_data_map))
     except Exception as e:
-        logger.warning("从 Neo4j 加载失败，改用内存数据: %s", e)
+        logger.warning("从 Neo4j 加载失败%s", e)
         logger.info("提示: 先运行 python -m examples.seed_certifies_neo4j 写入 Neo4j 后再运行本 demo 可从 Neo4j 读数据。")
-        node_data_map = build_certifies_node_data()
+        return
 
     print_header("Step 1: 基线执行")
     executor = ComputationGraphExecutor(graph, node_data_map)
@@ -468,7 +315,7 @@ async def main() -> None:
 
     # 将计算图与基线结果同步到 Neo4j，便于在 Browser 中可视化（仅当已连接 Neo4j 时）
     print_header("Step 2: 同步计算图到 Neo4j（数据节点 + 计算节点 + 关系）")
-    if not isinstance(neo4j_manager, _MockNeo4jManager):
+    if not isinstance(neo4j_manager, MockNeo4jManager):
         try:
             await neo4j_manager.sync_graph_to_neo4j(graph, node_data_map=executor.get_all_data_nodes())
             logger.info("Synced: %s data nodes, %s computation nodes, %s relationships",
@@ -476,6 +323,7 @@ async def main() -> None:
             neo4j_manager.print_visualization_instructions(graph)
             logger.info("Neo4j 已连接，可在 Neo4j Browser (http://localhost:7474) 中查看计算图。")
         finally:
+            await neo4j_manager.clear_graph_from_neo4j(graph)
             await neo4j_manager.disconnect()
             logger.info("Neo4j connection closed.")
     else:
@@ -484,7 +332,7 @@ async def main() -> None:
 
     # What-If：认证周期延长（verbose=True 打印计算过程）
     print_header("Step 3: What-If — 供应商认证周期由 30 天改为 40 天")
-    simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD))  # What-If 仅内存，不写 Neo4j
+    simulator = WhatIfSimulator(executor, neo4j_manager=MockNeo4jManager())  # What-If 仅内存，不写 Neo4j
     result = await simulator.run_scenario(
         [("MPart_DataNode_001", "supplierCertificationCycleLt", 40)],
         title="认证周期延长 10 天",

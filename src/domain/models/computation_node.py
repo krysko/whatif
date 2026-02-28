@@ -1,3 +1,11 @@
+"""
+计算节点模型：表示图中一个「计算单元」，包含输入/输出规格与可执行代码。
+
+- inputs/outputs 为 InputSpec/OutputSpec 元组，与关系的 datasource/data_output 对应。
+- code 为可被 eval 的表达式或语句，执行时从 DEPENDS_ON 来源读取变量并写入 OUTPUT_TO 目标。
+- priority 用于同层多节点时的执行顺序（数值越小越先执行）。
+"""
+
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -8,7 +16,7 @@ from .io_spec import InputSpec, OutputSpec
 
 @dataclass(frozen=True, slots=True)
 class ComputationNode:
-    """Represents a computation node in the computation graph"""
+    """计算图中的单点计算单元：id、名称、层级、输入/输出规格、可执行 code、引擎与优先级。"""
     id: str
     name: str  # e.g., 'calculate_total_price'
     level: ComputationLevel

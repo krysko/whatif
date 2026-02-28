@@ -21,9 +21,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-src_path = Path(__file__).parent.parent / "src"
+_root = Path(__file__).parent.parent
+src_path = _root / "src"
 sys.path.insert(0, str(src_path))
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
 
+from examples.demo_utils import clear_nodes_by_uuids
 from domain.services import Neo4jGraphManager
 
 
@@ -47,20 +51,6 @@ SEED_SPECS = {
         "tax_rate": 0.1,
     },
 }
-
-
-async def clear_nodes_by_uuids(manager: Neo4jGraphManager, uuids: list):
-    """按 uuid 删除节点（任意标签），便于重复运行脚本时先清后建"""
-    driver = manager.data_provider._get_driver()
-    if not driver:
-        return
-    async with driver.session() as session:
-        for uid in uuids:
-            await session.run(
-                "MATCH (n) WHERE n.uuid = $uid DETACH DELETE n",
-                uid=uid,
-            )
-    logger.info("Cleared nodes with uuid in %s", uuids)
 
 
 async def main():
