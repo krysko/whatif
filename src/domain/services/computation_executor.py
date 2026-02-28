@@ -179,18 +179,24 @@ class Neo4jDataProvider(DataProvider):
         if driver is None:
             return None
 
-        # Read from business nodes (Order, Invoice, etc.) only; do not read from DataNode
-        cypher_query = (
-            "MATCH (n) WHERE n.uuid = $uuid AND NOT (n:DataNode) "
-            "RETURN elementId(n) AS neo4j_id, properties(n) AS props"
-        )
+        # Read from business nodes first; if not found, from relationship (e.g. Certifies/Requires 只建了边)
         async with driver.session() as session:
-            result = await session.run(cypher_query, uuid=uuid)
+            node_query = (
+                "MATCH (n) WHERE n.uuid = $uuid AND NOT (n:DataNode) "
+                "RETURN properties(n) AS props"
+            )
+            result = await session.run(node_query, uuid=uuid)
             record = await result.single()
-            if record is None:
+            if record is not None and record["props"]:
+                return dict(record["props"])
+            rel_query = (
+                "MATCH ()-[r]->() WHERE r.uuid = $uuid RETURN properties(r) AS props"
+            )
+            result = await session.run(rel_query, uuid=uuid)
+            record = await result.single()
+            if record is None or not record["props"]:
                 return None
-            props = dict(record["props"]) if record["props"] else {}
-            return props
+            return dict(record["props"])
 
     async def set_node_properties(
         self,

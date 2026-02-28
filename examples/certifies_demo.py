@@ -6,7 +6,7 @@
 - 所需物料到货时间 = 认证完成时间 + timedelta(采购周期)
 - 子工序开始时间 = max(该工序所需物料到货时间, 前序工序完成时间)（首工序无前序则仅物料到货时间）
 - 子工序完成时间 = 子工序开始时间 + 子工序工期
-- 若子工序不依赖物料：完成时间 = 计划开始时间(startTime) + 工作周期(workCalendarDay)；是否依赖物料由是否存在 Requires 关系（该工序->物料）决定
+- 先序子工序：完成时间 = 计划开始时间(startTime) + 工作周期(workCalendarDay)；后序子工序：完成时间 = max(物料到货时间, 前序完成时间) + 工作周期；工序先后由计算图显式依赖表达，不依赖数据节点
 - 工序完成时间 = max(所有子工序完成时间)
 
 流程：内存 node_data_map + 计算图 -> 执行 -> 同步到 Neo4j 可视化 -> 可选 What-If（认证周期/采购周期/工期变化）。
@@ -77,14 +77,12 @@ def build_certifies_computation_graph() -> ComputationGraph:
     certification_cycle = InputSpec("property", "MPart", "supplierCertificationCycleLt")
     certification_completion_in = InputSpec("property", "Certifies", "certification_completion_time")
     purchase_cycle = InputSpec("property", "MPart", "purchaseCycleLt")
-    material_arrival_in = InputSpec("property", "MPart", "material_arrival_days")
+    material_arrival_in = InputSpec("property", "MPart", "material_arrival_time")
     work_calendar_day_001 = InputSpec("property", "AOProcedures", "workCalendarDay")
     work_calendar_day_002 = InputSpec("property", "AOProcedures", "workCalendarDay")
     op001_completion_in = InputSpec("property", "AOProcedures", "op001_completion_time")
     op002_completion_in = InputSpec("property", "AOProcedures", "op002_completion_time")
     plan_start_time = InputSpec("property", "VehicleBatch", "startTime")
-    depends_on_material_001 = InputSpec("property", "AOProcedures", "dependsOnMaterial")
-    depends_on_material_002 = InputSpec("property", "AOProcedures", "dependsOnMaterial")
 
     # OutputSpecs（均为 ISO 日期时间字符串）
     certification_completion_out = OutputSpec("property", "Certifies", "certification_completion_time")
@@ -115,25 +113,25 @@ def build_certifies_computation_graph() -> ComputationGraph:
         engine=ComputationEngine.PYTHON,
         priority=0,
     )
-    # 3. 子工序1完成时间：依赖物料则 物料到货时间+工期；不依赖则 startTime+工期（日期 + timedelta）
+    # 3. 子工序1完成时间（先序）：仅依赖 startTime + 工期，由计算关系显式表达，不读数据节点
     calc_op001_completion = ComputationNode(
         id="calc_op001_completion_time",
         name="op001_completion_time",
         level=ComputationLevel.PROPERTY,
-        inputs=(material_arrival_in, work_calendar_day_001, plan_start_time, depends_on_material_001),
+        inputs=(work_calendar_day_001, plan_start_time),
         outputs=(op001_completion_out,),
-        code="(datetime.fromisoformat(material_arrival_time.replace('Z','+00:00')) + timedelta(days=workCalendarDay)).isoformat() if dependsOnMaterial else (datetime.fromisoformat(startTime.replace('Z','+00:00')) + timedelta(days=workCalendarDay)).isoformat()",
+        code="(datetime.fromisoformat(startTime.replace('Z','+00:00')) + timedelta(days=workCalendarDay)).isoformat()",
         engine=ComputationEngine.PYTHON,
         priority=0,
     )
-    # 4. 子工序2完成时间：依赖物料则 max(物料到货时间,工序1完成时间)+工期；不依赖则 startTime+工期（日期 + timedelta）
+    # 4. 子工序2完成时间（后序）：显式依赖物料到货与工序1完成时间 max(物料,op001)+工期，由计算关系表达
     calc_op002_completion = ComputationNode(
         id="calc_op002_completion_time",
         name="op002_completion_time",
         level=ComputationLevel.PROPERTY,
-        inputs=(material_arrival_in, op001_completion_in, work_calendar_day_002, plan_start_time, depends_on_material_002),
+        inputs=(material_arrival_in, op001_completion_in, work_calendar_day_002),
         outputs=(op002_completion_out,),
-        code="(max(datetime.fromisoformat(material_arrival_time.replace('Z','+00:00')), datetime.fromisoformat(op001_completion_time.replace('Z','+00:00'))) + timedelta(days=workCalendarDay)).isoformat() if dependsOnMaterial else (datetime.fromisoformat(startTime.replace('Z','+00:00')) + timedelta(days=workCalendarDay)).isoformat()",
+        code="(max(datetime.fromisoformat(material_arrival_time.replace('Z','+00:00')), datetime.fromisoformat(op001_completion_time.replace('Z','+00:00'))) + timedelta(days=workCalendarDay)).isoformat()",
         engine=ComputationEngine.PYTHON,
         priority=0,
     )
@@ -153,87 +151,71 @@ def build_certifies_computation_graph() -> ComputationGraph:
     rels: List[ComputationRelationship] = [
         # Certifies, MPart -> calc_certification_completion
         ComputationRelationship(
-            "rel_cert_start_to_calc", "Certifies_uuid_001", "calc_certification_completion_time",
+            "rel_cert_start_to_calc", "Certifies_DataNode_001", "calc_certification_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=certification_start_time
         ),
         ComputationRelationship(
-            "rel_cycle_to_calc", "MPart_uuid_001", "calc_certification_completion_time",
+            "rel_cycle_to_calc", "MPart_DataNode_001", "calc_certification_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=certification_cycle
         ),
         ComputationRelationship(
-            "rel_calc_to_certifies", "calc_certification_completion_time", "Certifies_uuid_001",
+            "rel_calc_to_certifies", "calc_certification_completion_time", "Certifies_DataNode_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=certification_completion_out
         ),
         # Certifies, MPart -> calc_material_arrival
         ComputationRelationship(
-            "rel_cert_completion_to_material", "Certifies_uuid_001", "calc_material_arrival_time",
+            "rel_cert_completion_to_material", "Certifies_DataNode_001", "calc_material_arrival_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=certification_completion_in
         ),
         ComputationRelationship(
-            "rel_purchase_to_material", "MPart_uuid_001", "calc_material_arrival_time",
+            "rel_purchase_to_material", "MPart_DataNode_001", "calc_material_arrival_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=purchase_cycle
         ),
         ComputationRelationship(
-            "rel_material_to_mpart", "calc_material_arrival_time", "MPart_uuid_001",
+            "rel_material_to_mpart", "calc_material_arrival_time", "MPart_DataNode_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=material_arrival_out
         ),
-        # MPart, AOProcedures_001, VehicleBatch -> calc_op001_completion
+        # AOProcedures_001, VehicleBatch -> calc_op001_completion（先序：仅 startTime + workCalendarDay）
         ComputationRelationship(
-            "rel_material_to_op001", "MPart_uuid_001", "calc_op001_completion_time",
-            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=material_arrival_in
-        ),
-        ComputationRelationship(
-            "rel_work001_to_calc", "AOProcedures_uuid_001", "calc_op001_completion_time",
+            "rel_work001_to_calc", "AOProcedures_DataNode_001", "calc_op001_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=work_calendar_day_001
         ),
         ComputationRelationship(
-            "rel_batch_start_to_op001", "VehicleBatch_uuid_001", "calc_op001_completion_time",
+            "rel_batch_start_to_op001", "VehicleBatch_DataNode_001", "calc_op001_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=plan_start_time
         ),
         ComputationRelationship(
-            "rel_depends001_to_calc", "AOProcedures_uuid_001", "calc_op001_completion_time",
-            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=depends_on_material_001
-        ),
-        ComputationRelationship(
-            "rel_op001_to_ao001", "calc_op001_completion_time", "AOProcedures_uuid_001",
+            "rel_op001_to_ao001", "calc_op001_completion_time", "AOProcedures_DataNode_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=op001_completion_out
         ),
-        # MPart, AOProcedures_001(前序完成时间), AOProcedures_002, VehicleBatch -> calc_op002_completion
+        # MPart(物料到货), AOProcedures_001(工序1完成), AOProcedures_002(工期) -> calc_op002_completion（后序：显式依赖）
         ComputationRelationship(
-            "rel_material_to_op002", "MPart_uuid_001", "calc_op002_completion_time",
+            "rel_material_to_op002", "MPart_DataNode_001", "calc_op002_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=material_arrival_in
         ),
         ComputationRelationship(
-            "rel_op001_completion_to_op002", "AOProcedures_uuid_001", "calc_op002_completion_time",
+            "rel_op001_completion_to_op002", "AOProcedures_DataNode_001", "calc_op002_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=op001_completion_in
         ),
         ComputationRelationship(
-            "rel_work002_to_calc", "AOProcedures_uuid_002", "calc_op002_completion_time",
+            "rel_work002_to_calc", "AOProcedures_DataNode_002", "calc_op002_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=work_calendar_day_002
         ),
         ComputationRelationship(
-            "rel_batch_start_to_op002", "VehicleBatch_uuid_001", "calc_op002_completion_time",
-            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=plan_start_time
-        ),
-        ComputationRelationship(
-            "rel_depends002_to_calc", "AOProcedures_uuid_002", "calc_op002_completion_time",
-            "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=depends_on_material_002
-        ),
-        ComputationRelationship(
-            "rel_op002_to_ao002", "calc_op002_completion_time", "AOProcedures_uuid_002",
+            "rel_op002_to_ao002", "calc_op002_completion_time", "AOProcedures_DataNode_002",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=op002_completion_out
         ),
         # AOProcedures_001, AOProcedures_002 -> calc_process_completion
         ComputationRelationship(
-            "rel_op001_to_process", "AOProcedures_uuid_001", "calc_process_completion_time",
+            "rel_op001_to_process", "AOProcedures_DataNode_001", "calc_process_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=op001_completion_in
         ),
         ComputationRelationship(
-            "rel_op002_to_process", "AOProcedures_uuid_002", "calc_process_completion_time",
+            "rel_op002_to_process", "AOProcedures_DataNode_002", "calc_process_completion_time",
             "dep", ComputationRelationType.DEPENDS_ON, "property", datasource=op002_completion_in
         ),
         ComputationRelationship(
-            "rel_process_to_batch", "calc_process_completion_time", "VehicleBatch_uuid_001",
+            "rel_process_to_batch", "calc_process_completion_time", "VehicleBatch_DataNode_001",
             "out", ComputationRelationType.OUTPUT_TO, "property", data_output=process_completion_out
         ),
     ]
@@ -257,17 +239,17 @@ def build_certifies_computation_graph() -> ComputationGraph:
 # ============================================================================
 
 def build_certifies_node_data() -> Dict[str, Dict]:
-    return {
-        "Supplier_uuid_001": {
+    """与计算图一致的数据节点数据；每条的 uuid 即数据节点 ID（xxx_DataNode_xxx），便于从 Neo4j 按 uuid 加载。"""
+    raw = {
+        "Supplier_DataNode_001": {
             "id": "S03",
             "certificationStatus": "已认证",
             "supplierAddress": "北京市海淀区",
             "supplierName": "北京科技有限公司",
             "supplierType": "工装供应商",
             "type": "Supplier",
-            "uuid": "Supplier_uuid_001"
         },
-        "MPart_uuid_001": {
+        "MPart_DataNode_001": {
             "id": "火花塞",
             "materialCost": 100.0,
             "mpartCategory": "采购件",
@@ -280,43 +262,38 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "sourceMethod": "Buy",
             "status": "active",
             "supplierCertificationCycleLt": 30,
-            "uuid": "MPart_uuid_001",
-            "type": "MPart"
+            "type": "MPart",
         },
-        "AOProcedures_uuid_001": {
-            "id":"AO_OP3001",
+        "AOProcedures_DataNode_001": {
+            "id": "AO_OP3001",
             "apOpCpde": "AO_OP3001",
             "opName": "汽车-工序B1",
             "stationName": "A001-工位1",
-            "uuid": "AOProcedures_uuid_001",
             "type": "AOProcedures",
             "workCalendarDay": 30.0,
         },
-        "AOProcedures_uuid_002": {
-            "id":"AO_OP3002",
+        "AOProcedures_DataNode_002": {
+            "id": "AO_OP3002",
             "apOpCpde": "AO_OP3002",
             "opName": "汽车-工序B1",
             "stationName": "A001-工位1",
-            "uuid": "AOProcedures_uuid_002",
             "type": "AOProcedures",
             "workCalendarDay": 13.0,
         },
-        "VehicleBatch_uuid_001": {
+        "VehicleBatch_DataNode_001": {
             "id": "C201",
             "aoId": "AO001",
             "projectId": "0003",
             "startTime": "2026-01-24T00:00:01",
             "status": "进行中",
-            "uuid": "VehicleBatch_uuid_001",
             "type": "VehicleBatch",
             "vehicleBatch": "20",
-            "vehicleModel": "CF02"
+            "vehicleModel": "CF02",
         },
-        "Certifies_uuid_001": {
+        "Certifies_DataNode_001": {
             "id": "0005",
-            "start_id": "MPart_uuid_001",
-            "end_id": "Supplier_uuid_001",
-            "uuid": "Certifies_uuid_001",
+            "start_id": "MPart_DataNode_001",
+            "end_id": "Supplier_DataNode_001",
             "type": "Certifies",
             "mpartCode": "火花塞",
             "purchaseShare": "100%",
@@ -324,66 +301,54 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "status": "认证中",
             "supplierCode": "S03",
         },
-        "Requires_uuid_001": {
+        "Requires_DataNode_001": {
             "id": "0005",
             "aoCode": "P40",
             "aoOpCode": "AO_OP3002",
-            "start_id": "AOProcedures_uuid_002",
-            "end_id": "MPart_uuid_001",
+            "start_id": "AOProcedures_DataNode_002",
+            "end_id": "MPart_DataNode_001",
             "mPartCode": "火花塞",
             "requiredQuantity": 1,
-            "uuid": "Requires_uuid_001",
-            "type": "Requires"
+            "type": "Requires",
         },
-        "MPartStatus_uuid_001": {
+        "MPartStatus_DataNode_001": {
             "id": "0702",
             "aoOpCode": "AO_OP3002",
             "mPartCode": "火花塞",
             "materialStatus": "未冻结",
             "process": "汽车-工序B2",
-            "start_id": "VehicleBatch_uuid_001",
-            "end_id": "MPart_uuid_001",
+            "start_id": "VehicleBatch_DataNode_001",
+            "end_id": "MPart_DataNode_001",
             "vehicleBatchCode": "C201",
-            "uuid": "MPartStatus_uuid_001",
-            "type": "MPartStatus"
+            "type": "MPartStatus",
         },
-        "AOProcedureStatus_uuid_001": {
+        "AOProcedureStatus_DataNode_001": {
             "id": "0602",
             "aoOpCode": "AO_OP3002",
             "operationName": "汽车-工序B2",
             "vehicleBatchCode": "C201",
-            "start_id": "VehicleBatch_uuid_001",
-            "end_id": "AOProcedures_uuid_002",
-            "uuid": "AOProcedureStatus_uuid_001",
-            "type": "AOProcedureStatus"
+            "start_id": "VehicleBatch_DataNode_001",
+            "end_id": "AOProcedures_DataNode_002",
+            "type": "AOProcedureStatus",
         },
-        "AOProcedureStatus_uuid_002": {
+        "AOProcedureStatus_DataNode_002": {
             "id": "0601",
             "aoOpCode": "AO_OP3001",
             "operationName": "汽车-工序B1",
             "vehicleBatchCode": "C201",
-            "start_id": "VehicleBatch_uuid_001",
-            "end_id": "AOProcedures_uuid_002",
-            "uuid": "AOProcedureStatus_uuid_002",
-            "type": "AOProcedureStatus"
+            "start_id": "VehicleBatch_DataNode_001",
+            "end_id": "AOProcedures_DataNode_001",
+            "type": "AOProcedureStatus",
+        },
+        "HappensAfter_DataNode_001": {
+            "id": "0005",
+            "start_id": "AOProcedures_DataNode_001",
+            "end_id": "AOProcedures_DataNode_002",
+            "type": "HappensAfter",
         }
     }
-
-
-def set_depends_on_material_from_requires(node_data_map: Dict[str, Dict]) -> None:
-    """
-    根据是否存在 Requires 关系（工序 start_id -> 物料 end_id）设置各 AOProcedures 的 dependsOnMaterial。
-    若存在至少一条 Requires 的 start_id 指向该工序，则依赖物料，否则不依赖。
-    """
-    procedure_ids_with_requires: set = set()
-    for _uuid, props in node_data_map.items():
-        if props.get("type") == "Requires":
-            start_id = props.get("start_id")  # 工序
-            if start_id:
-                procedure_ids_with_requires.add(start_id)
-    for _uuid, props in node_data_map.items():
-        if props.get("type") == "AOProcedures":
-            props["dependsOnMaterial"] = _uuid in procedure_ids_with_requires
+    # 每条数据的 uuid 固定为数据节点 ID（xxx_DataNode_xxx），与 Neo4j 中按 uuid 查找一致
+    return {data_node_id: {**p, "uuid": data_node_id} for data_node_id, p in raw.items()}
 
 
 # ============================================================================
@@ -394,19 +359,25 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     print_header("认证与物料/工序计算图 Demo")
     logger.info("计算链: 认证完成时间 -> 物料到货时间 -> 子工序完成时间 -> 工序完成时间(max)")
-    logger.info("是否依赖物料由是否存在 Requires 关系（工序->物料）决定")
+    logger.info("工序依赖由计算图显式表达：先序仅 startTime+工期，后序显式依赖物料到货与先序完成")
     logger.info("")
 
     graph = build_certifies_computation_graph()
-    node_data_map = build_certifies_node_data()
-    set_depends_on_material_from_requires(node_data_map)
+    neo4j_manager: Neo4jGraphManager = _MockNeo4jManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    node_data_map: Dict[str, Dict]
 
-    # 仅保留计算图中用到的数据节点（关系里出现的 source_id/target_id）
-    data_node_ids = {
-        "Certifies_uuid_001", "MPart_uuid_001", "AOProcedures_uuid_001",
-        "AOProcedures_uuid_002", "VehicleBatch_uuid_001",
-    }
-    node_data_map = {k: v for k, v in node_data_map.items() if k in data_node_ids}
+    # 优先从 Neo4j 按数据节点 ID（xxx_DataNode_xxx）加载取值；失败则使用内存数据
+    try:
+        _manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+        await _manager.connect()
+        logger.info("Connected to Neo4j，按数据节点 ID 加载节点数据…")
+        node_data_map = await _manager.load_graph_data_from_neo4j(graph)
+        neo4j_manager = _manager
+        logger.info("已从 Neo4j 加载 %s 个数据节点", len(node_data_map))
+    except Exception as e:
+        logger.warning("从 Neo4j 加载失败，改用内存数据: %s", e)
+        logger.info("提示: 先运行 python -m examples.seed_certifies_neo4j 写入 Neo4j 后再运行本 demo 可从 Neo4j 读数据。")
+        node_data_map = build_certifies_node_data()
 
     print_header("Step 1: 基线执行")
     executor = ComputationGraphExecutor(graph, node_data_map)
@@ -414,29 +385,27 @@ async def main() -> None:
     executor.print_node_data("基线结果")
     logger.info("")
 
-    # 将计算图与基线结果同步到 Neo4j，便于在 Browser 中可视化
+    # 将计算图与基线结果同步到 Neo4j，便于在 Browser 中可视化（仅当已连接 Neo4j 时）
     print_header("Step 2: 同步计算图到 Neo4j（数据节点 + 计算节点 + 关系）")
-    try:
-        neo4j_manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-        await neo4j_manager.connect()
-        logger.info("Connected to Neo4j")
-        # 使用执行后的节点数据（含计算得到的属性）同步到 Neo4j
-        await neo4j_manager.sync_graph_to_neo4j(graph, node_data_map=executor.get_all_data_nodes())
-        logger.info("Synced: %s data nodes, %s computation nodes, %s relationships",
-                    len(node_data_map), len(graph.computation_nodes), len(graph.computation_relationships))
-        neo4j_manager.print_visualization_instructions(graph)
-        await neo4j_manager.disconnect()
-        logger.info("Neo4j connection closed. 可在 Neo4j Browser (http://localhost:7474) 中查看计算图。")
-    except Exception as e:
-        logger.warning("Neo4j 未连接，跳过可视化: %s", e)
-        logger.info("提示: 启动 Neo4j 后可重新运行以同步计算图，例如: docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/123456789 neo4j")
+    if not isinstance(neo4j_manager, _MockNeo4jManager):
+        try:
+            await neo4j_manager.sync_graph_to_neo4j(graph, node_data_map=executor.get_all_data_nodes())
+            logger.info("Synced: %s data nodes, %s computation nodes, %s relationships",
+                        len(node_data_map), len(graph.computation_nodes), len(graph.computation_relationships))
+            neo4j_manager.print_visualization_instructions(graph)
+            logger.info("Neo4j 已连接，可在 Neo4j Browser (http://localhost:7474) 中查看计算图。")
+        finally:
+            await neo4j_manager.disconnect()
+            logger.info("Neo4j connection closed.")
+    else:
+        logger.info("未连接 Neo4j，跳过同步。启动 Neo4j 并先运行 seed_certifies_neo4j 后，本 demo 将自动从 Neo4j 读数据并同步。")
     logger.info("")
 
     # What-If：认证周期延长（verbose=True 打印计算过程）
     print_header("Step 3: What-If — 供应商认证周期由 30 天改为 40 天")
     simulator = WhatIfSimulator(executor, neo4j_manager=_MockNeo4jManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD))  # What-If 仅内存，不写 Neo4j
     result = await simulator.run_scenario(
-        [("MPart_uuid_001", "supplierCertificationCycleLt", 40)],
+        [("MPart_DataNode_001", "supplierCertificationCycleLt", 40)],
         title="认证周期延长 10 天",
         verbose=True,
     )
@@ -446,7 +415,7 @@ async def main() -> None:
     # What-If：采购周期缩短（打印计算过程）
     print_header("Step 4: What-If — 采购周期由 30 天改为 20 天")
     result2 = await simulator.run_scenario(
-        [("MPart_uuid_001", "purchaseCycleLt", 20)],
+        [("MPart_DataNode_001", "purchaseCycleLt", 20)],
         title="采购周期缩短 10 天",
         verbose=True,
     )

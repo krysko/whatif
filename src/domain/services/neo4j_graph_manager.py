@@ -97,15 +97,22 @@ class Neo4jGraphManager:
     async def load_graph_data_from_neo4j(
         self,
         graph: ComputationGraph,
+        *,
+        extra_data_node_ids: Optional[Iterable[str]] = None,
     ) -> Dict[str, Dict]:
         """
         Load data nodes for a computation graph from Neo4j by uuid.
         Raises ValueError if any required data nodes are missing in Neo4j.
 
+        Args:
+            graph: The computation graph (data node ids from relationships).
+            extra_data_node_ids: Optional extra data node ids to load (e.g. for
+                nodes used only in post-processing like set_depends_on_material).
+
         Returns:
             node_data_map for use with ComputationGraphExecutor.
         """
-        data_node_ids = graph.get_data_node_ids()
+        data_node_ids = set(graph.get_data_node_ids()) | set(extra_data_node_ids or ())
         node_data_map = await self.load_data_nodes_from_neo4j(data_node_ids)
         missing = set(data_node_ids) - set(node_data_map.keys())
         if missing:

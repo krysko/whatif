@@ -110,10 +110,19 @@ class ComputationGraphExecutor:
             logger.info("Executing: %s (%s)", node_id, node_data.get('name'))
             logger.info("  Code: %s", node_data.get('code'))
 
-        # Gather input variables from predecessors
+        # Gather input variables from incoming DEPENDS_ON edges only (by source + property_name),
+        # so multiple predecessors with same property (e.g. two AOProcedures both have workCalendarDay)
+        # each contribute the correct value per edge instead of depending on merge order.
         variables = {}
-        for predecessor in self.G.predecessors(node_id):
-            variables.update(self.G.nodes[predecessor])
+        for rel in self.graph.computation_relationships.values():
+            if rel.relation_type != ComputationRelationType.DEPENDS_ON or rel.target_id != node_id:
+                continue
+            if not getattr(rel, "datasource", None) or not rel.datasource.property_name:
+                continue
+            src_id = rel.source_id
+            prop = rel.datasource.property_name
+            if src_id in self.G.nodes and prop in self.G.nodes[src_id]:
+                variables[prop] = self.G.nodes[src_id][prop]
 
         # Execute computation (inject datetime/timedelta for date expressions)
         code = node_data.get("code", "")
