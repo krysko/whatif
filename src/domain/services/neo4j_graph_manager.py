@@ -69,13 +69,13 @@ class Neo4jGraphManager:
 
     async def load_data_nodes_from_neo4j(
         self, uuids: Iterable[str]
-    ) -> Tuple[Dict[str, Dict], Dict[str, str]]:
+    ) -> Dict[str, Dict]:
         """
         Per computation graph need: read properties from nodes (any label) by uuid,
         then materialize into DataNodes in Neo4j. Only these DataNodes are connected to ComputationNodes.
 
         Flow: find source node by uuid -> get properties -> MERGE DataNode with that data
-        -> return node_data_map (for executor) and data_node_id_map (optional, e.g. for debug).
+        -> return node_data_map (keyed by uuid, for executor).
         """
         node_data_map: Dict[str, Dict] = {}
         for uuid in uuids:
@@ -84,7 +84,7 @@ class Neo4jGraphManager:
             if result is None:
                 logger.warning("Node with uuid '%s' not found in Neo4j, skipping.", uuid)
                 continue
-            props = result
+            props = result if isinstance(result, dict) else result[1]
             # Materialize into DataNode in Neo4j (MERGE by uuid); computation graph links to DataNode only
             data_node_uuid_id = await self.data_provider.merge_data_node(
                 uuid, {**props, "uuid": uuid}
@@ -94,11 +94,40 @@ class Neo4jGraphManager:
             node_data_map[uuid] = props
         return node_data_map
 
+    async def load_data_nodes_from_neo4j_by_mapping(
+        self, data_node_id_to_neo4j_uuid: Dict[str, str]
+    ) -> Dict[str, Dict]:
+        """
+        根据「计算图数据节点 ID -> Neo4j 中节点/关系的 uuid」映射，从 Neo4j 拉取对应属性，
+        填充到以数据节点 ID 为 key 的 node_data_map，供计算图执行器使用。
+
+        Args:
+            data_node_id_to_neo4j_uuid: 计算图中数据节点 ID 到 Neo4j uuid 的映射
+                (例如 get_graph_datanode_uuids() 的返回值)。
+
+        Returns:
+            node_data_map: key 为数据节点 ID，value 为从 Neo4j 读到的属性 dict。
+        """
+        node_data_map: Dict[str, Dict] = {}
+        for data_node_id, neo4j_uuid in data_node_id_to_neo4j_uuid.items():
+            result = await self.data_provider.get_data_node_by_uuid(neo4j_uuid)
+            if result is None:
+                logger.warning(
+                    "Neo4j node/rel with uuid '%s' (data_node_id=%s) not found, skipping.",
+                    neo4j_uuid,
+                    data_node_id,
+                )
+                continue
+            props = result if isinstance(result, dict) else result[1]
+            node_data_map[data_node_id] = props
+        return node_data_map
+
     async def load_graph_data_from_neo4j(
         self,
         graph: ComputationGraph,
         *,
         extra_data_node_ids: Optional[Iterable[str]] = None,
+        data_node_id_to_neo4j_uuid: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Dict]:
         """
         Load data nodes for a computation graph from Neo4j by uuid.
@@ -108,12 +137,23 @@ class Neo4jGraphManager:
             graph: The computation graph (data node ids from relationships).
             extra_data_node_ids: Optional extra data node ids to load (e.g. for
                 nodes used only in post-processing like set_depends_on_material).
+            data_node_id_to_neo4j_uuid: Optional mapping from graph data node id to Neo4j uuid.
+                When provided, Neo4j is queried by these uuids and the result is keyed by data
+                node id (e.g. from get_graph_datanode_uuids()). When None, data node ids are
+                used directly as Neo4j uuid.
 
         Returns:
-            node_data_map for use with ComputationGraphExecutor.
+            node_data_map for use with ComputationGraphExecutor (keys = data node ids).
         """
         data_node_ids = set(graph.get_data_node_ids()) | set(extra_data_node_ids or ())
-        node_data_map = await self.load_data_nodes_from_neo4j(data_node_ids)
+        if data_node_id_to_neo4j_uuid is not None:
+            # 仅对图中用到的数据节点做映射；未在映射中的仍用 data_node_id 作为 uuid 查询
+            mapping = {
+                did: data_node_id_to_neo4j_uuid.get(did, did) for did in data_node_ids
+            }
+            node_data_map = await self.load_data_nodes_from_neo4j_by_mapping(mapping)
+        else:
+            node_data_map = await self.load_data_nodes_from_neo4j(data_node_ids)
         missing = set(data_node_ids) - set(node_data_map.keys())
         if missing:
             raise ValueError(

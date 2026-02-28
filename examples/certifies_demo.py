@@ -248,6 +248,8 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "supplierName": "北京科技有限公司",
             "supplierType": "工装供应商",
             "type": "Supplier",
+            "uuid": "Supplier_uuid_001",
+            "element_type": "NODE"
         },
         "MPart_DataNode_001": {
             "id": "火花塞",
@@ -263,6 +265,8 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "status": "active",
             "supplierCertificationCycleLt": 30,
             "type": "MPart",
+            "uuid": "MPart_uuid_001",
+            "element_type": "NODE"
         },
         "AOProcedures_DataNode_001": {
             "id": "AO_OP3001",
@@ -271,6 +275,8 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "stationName": "A001-工位1",
             "type": "AOProcedures",
             "workCalendarDay": 30.0,
+            "uuid": "AOProcedures_uuid_001",
+            "element_type": "NODE"
         },
         "AOProcedures_DataNode_002": {
             "id": "AO_OP3002",
@@ -279,6 +285,8 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "stationName": "A001-工位1",
             "type": "AOProcedures",
             "workCalendarDay": 13.0,
+            "uuid": "AOProcedures_uuid_002",
+            "element_type": "NODE"
         },
         "VehicleBatch_DataNode_001": {
             "id": "C201",
@@ -289,27 +297,33 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "type": "VehicleBatch",
             "vehicleBatch": "20",
             "vehicleModel": "CF02",
+            "uuid": "VehicleBatch_uuid_001",
+            "element_type": "NODE"
         },
         "Certifies_DataNode_001": {
             "id": "0005",
-            "start_id": "MPart_DataNode_001",
-            "end_id": "Supplier_DataNode_001",
+            "start_id": "MPart_uuid_001",
+            "end_id": "Supplier_uuid_001",
             "type": "Certifies",
             "mpartCode": "火花塞",
             "purchaseShare": "100%",
             "reqCertificationStartTime": "2025-12-21T00:00:01",
             "status": "认证中",
             "supplierCode": "S03",
+            "uuid": "Certifies_uuid_001",
+            "element_type": "EDGE"
         },
         "Requires_DataNode_001": {
             "id": "0005",
             "aoCode": "P40",
             "aoOpCode": "AO_OP3002",
-            "start_id": "AOProcedures_DataNode_002",
-            "end_id": "MPart_DataNode_001",
+            "start_id": "AOProcedures_uuid_002",
+            "end_id": "MPart_uuid_001",
             "mPartCode": "火花塞",
             "requiredQuantity": 1,
             "type": "Requires",
+            "uuid": "Requires_uuid_001",
+            "element_type": "EDGE"
         },
         "MPartStatus_DataNode_001": {
             "id": "0702",
@@ -317,39 +331,62 @@ def build_certifies_node_data() -> Dict[str, Dict]:
             "mPartCode": "火花塞",
             "materialStatus": "未冻结",
             "process": "汽车-工序B2",
-            "start_id": "VehicleBatch_DataNode_001",
-            "end_id": "MPart_DataNode_001",
+            "start_id": "VehicleBatch_uuid_001",
+            "end_id": "MPart_uuid_001",
             "vehicleBatchCode": "C201",
             "type": "MPartStatus",
+            "uuid": "MPartStatus_uuid_001",
+            "element_type": "EDGE"
         },
         "AOProcedureStatus_DataNode_001": {
             "id": "0602",
             "aoOpCode": "AO_OP3002",
             "operationName": "汽车-工序B2",
             "vehicleBatchCode": "C201",
-            "start_id": "VehicleBatch_DataNode_001",
-            "end_id": "AOProcedures_DataNode_002",
+            "start_id": "VehicleBatch_uuid_001",
+            "end_id": "AOProcedures_uuid_002",
             "type": "AOProcedureStatus",
+            "uuid": "AOProcedureStatus_uuid_001",
+            "element_type": "EDGE"
         },
         "AOProcedureStatus_DataNode_002": {
             "id": "0601",
             "aoOpCode": "AO_OP3001",
             "operationName": "汽车-工序B1",
             "vehicleBatchCode": "C201",
-            "start_id": "VehicleBatch_DataNode_001",
-            "end_id": "AOProcedures_DataNode_001",
+            "start_id": "VehicleBatch_uuid_001",
+            "end_id": "AOProcedures_uuid_001",
             "type": "AOProcedureStatus",
+            "uuid": "AOProcedureStatus_uuid_002",
+            "element_type": "EDGE"
         },
         "HappensAfter_DataNode_001": {
             "id": "0005",
-            "start_id": "AOProcedures_DataNode_001",
-            "end_id": "AOProcedures_DataNode_002",
+            "uuid": "HappensAfter_uuid_001",
             "type": "HappensAfter",
+            "start_id": "AOProcedures_uuid_001",
+            "end_id": "AOProcedures_uuid_002",
+            "element_type": "EDGE"
         }
     }
     # 每条数据的 uuid 固定为数据节点 ID（xxx_DataNode_xxx），与 Neo4j 中按 uuid 查找一致
-    return {data_node_id: {**p, "uuid": data_node_id} for data_node_id, p in raw.items()}
+    return raw
 
+def get_graph_datanode_uuids() -> Dict[str, str]:
+    # DataNode和具体数据节点uuid的映射
+    return {
+        "AOProcedures_DataNode_001": "AOProcedures_uuid_001",
+        "AOProcedures_DataNode_002": "AOProcedures_uuid_002",
+        "VehicleBatch_DataNode_001": "VehicleBatch_uuid_001",
+        "Certifies_DataNode_001": "Certifies_uuid_001",
+        "Requires_DataNode_001": "Requires_uuid_001",
+        "MPartStatus_DataNode_001": "MPartStatus_uuid_001",
+        "AOProcedureStatus_DataNode_001": "AOProcedureStatus_uuid_001",
+        "AOProcedureStatus_DataNode_002": "AOProcedureStatus_uuid_002",
+        "HappensAfter_DataNode_001": "HappensAfter_uuid_001",
+        "Supplier_DataNode_001": "Supplier_uuid_001",
+        "MPart_DataNode_001": "MPart_uuid_001"
+    }
 
 # ============================================================================
 # Main
@@ -366,12 +403,15 @@ async def main() -> None:
     neo4j_manager: Neo4jGraphManager = _MockNeo4jManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
     node_data_map: Dict[str, Dict]
 
-    # 优先从 Neo4j 按数据节点 ID（xxx_DataNode_xxx）加载取值；失败则使用内存数据
+    # 优先从 Neo4j 按 get_graph_datanode_uuids 映射加载数据节点属性；失败则使用内存数据
     try:
         _manager = Neo4jGraphManager(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
         await _manager.connect()
-        logger.info("Connected to Neo4j，按数据节点 ID 加载节点数据…")
-        node_data_map = await _manager.load_graph_data_from_neo4j(graph)
+        datanode_uuids = get_graph_datanode_uuids()
+        logger.info("Connected to Neo4j，按 data_node_id->neo4j_uuid 映射加载节点数据…")
+        node_data_map = await _manager.load_graph_data_from_neo4j(
+            graph, data_node_id_to_neo4j_uuid=datanode_uuids
+        )
         neo4j_manager = _manager
         logger.info("已从 Neo4j 加载 %s 个数据节点", len(node_data_map))
     except Exception as e:

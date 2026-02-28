@@ -1,8 +1,8 @@
 """
 将 certifies 计算图所需的数据写入 Neo4j。
 
-- 仅对「实体」建点：无 start_id/end_id 的条目建为节点，uuid = xxx_DataNode_xxx。
-- 对「关系型」条目（含 start_id/end_id）：只建边不建点；(start)-[REL_TYPE]->(end)，
+- 仅对 element_type=NODE 的条目建点：MERGE (n:Label {uuid}) 并写入属性。
+- 对 element_type=EDGE 的条目建边不建点：MERGE (start)-[REL_TYPE {uuid}]->(end)，
   关系类型为 type（如 CERTIFIES、REQUIRES），关系上带 uuid 及该条目的全部属性，
   便于 load 时按 uuid 从边上取属性。
 
@@ -38,9 +38,9 @@ async def seed() -> None:
     driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     try:
         async with driver.session() as session:
-            # 1. 只建「实体」节点：无 start_id/end_id 的才建点
+            # 1. 建「实体」节点：element_type=NODE
             for data_node_id, props in node_data.items():
-                if props.get("start_id") is not None and props.get("end_id") is not None:
+                if props.get("element_type") != "NODE":
                     continue
                 label = props.get("type")
                 if not label:
@@ -51,11 +51,14 @@ async def seed() -> None:
                     "ON CREATE SET n = $props "
                     "ON MATCH SET n += $props"
                 )
-                await session.run(query, uuid=data_node_id, props=props)
-                logger.info("MERGE node %s (%s)", data_node_id, label)
+                node_uuid = props.get("uuid", data_node_id)
+                await session.run(query, uuid=node_uuid, props=props)
+                logger.info("MERGE node %s (%s)", node_uuid, label)
 
-            # 2. 「关系型」只建边：有 start_id/end_id 的建 (start)-[TYPE]->(end)，属性（含 uuid）放在边上
+            # 2. 「关系型」只建边：element_type=EDGE；(start)-[TYPE]->(end)，属性（含 uuid）放在边上
             for data_node_id, props in node_data.items():
+                if props.get("element_type") != "EDGE":
+                    continue
                 start_id = props.get("start_id")
                 end_id = props.get("end_id")
                 if not start_id or not end_id:
@@ -71,14 +74,15 @@ async def seed() -> None:
                     "ON CREATE SET r = $rel_props "
                     "ON MATCH SET r += $rel_props"
                 )
+                rel_uuid = props.get("uuid", data_node_id)
                 await session.run(
                     query,
                     start_id=start_id,
                     end_id=end_id,
-                    rel_uuid=data_node_id,
+                    rel_uuid=rel_uuid,
                     rel_props=rel_props,
                 )
-                logger.info("MERGE rel (%s)-[:%s]->(%s) uuid=%s", start_id, rel_type, end_id, data_node_id)
+                logger.info("MERGE rel (%s)-[:%s]->(%s) uuid=%s", start_id, rel_type, end_id, rel_uuid)
 
         logger.info("已写入实体节点与关系到 Neo4j（关系型仅建边不建点）")
     finally:

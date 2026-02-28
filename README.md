@@ -52,7 +52,7 @@
 |------|------|------|
 | **ComputationGraphExecutor** | `computation_graph_executor.py` | 用 NetworkX 建图；依赖图含 DEPENDS_ON + writer-before-reader 边；拓扑序执行；`snapshot_data_nodes()` / `restore_data_nodes()` 做基线快照与恢复；单节点 `eval(code)` 执行，经 OUTPUT_TO 写回后继节点。 |
 | **WhatIfSimulator** | `what_if_simulator.py` | What-If 入口：`run_scenario(property_changes, title)`。在隔离环境中执行一次模拟（可多属性修改），内部 snapshot → 改属性 → 执行 → restore，不改变 executor 内存；返回 `ScenarioRunResult(baseline, scenario, diff)`，其中 diff 为模拟与基线的属性级差异列表。 |
-| **Neo4jGraphManager** | `neo4j_graph_manager.py` | 连接 Neo4j；`create_business_nodes(specs)` 创建业务节点；**`sync_graph_to_neo4j(graph, node_data_map=None)`** 一步完成：同步数据节点、创建计算节点、创建计算关系（便于 Neo4j 可视化）；不传 `node_data_map` 时从 Neo4j 按 uuid 加载，传入时从内存同步；`get_visualization_cypher(graph)`、`print_visualization_instructions(graph)` 生成 Cypher；`write_output_properties(...)` 写回。 |
+| **Neo4jGraphManager** | `neo4j_graph_manager.py` | 连接 Neo4j；`create_business_nodes(specs)` 创建业务节点；**`load_graph_data_from_neo4j(graph, ..., data_node_id_to_neo4j_uuid=None)`** 按图中数据节点 ID 或可选映射从 Neo4j 加载属性到 `node_data_map`；**`load_data_nodes_from_neo4j_by_mapping(data_node_id_to_neo4j_uuid)`** 按「数据节点 ID → Neo4j uuid」映射拉取属性（支持节点与边上属性）；**`sync_graph_to_neo4j(graph, node_data_map=None)`** 一步完成：同步数据节点、创建计算节点、创建计算关系（便于 Neo4j 可视化）；不传 `node_data_map` 时从 Neo4j 按 uuid 加载，传入时从内存同步；`get_visualization_cypher(graph)`、`print_visualization_instructions(graph)` 生成 Cypher；`write_output_properties(...)` 写回。 |
 
 ---
 
@@ -60,7 +60,7 @@
 
 ### 4.1 主路径：Neo4j → 内存执行 → 可选写回（推荐用于 What-If）
 
-**代表 Demo**：`simple_computation_chain.py`、`supply_chain_delay_demo.py`。
+**代表 Demo**：`simple_computation_chain.py`、`supply_chain_delay_demo.py`、`certifies_demo.py`。
 
 1. **连接 Neo4j**：`Neo4jGraphManager.connect()`。
 2. **同步图到 Neo4j（一步）**：`node_data_map = await neo4j_manager.sync_graph_to_neo4j(graph)` — 同步数据节点、计算节点、计算关系到 Neo4j；不传 `node_data_map` 时从 Neo4j 按 uuid 加载数据，传入时从内存同步。运行 `print_visualization_instructions(graph)` 可打印 Cypher，在 Neo4j Browser (http://localhost:7474) 中可视化。
@@ -85,10 +85,18 @@
 - **数据**：纯内存 `node_data_map`，不依赖 Neo4j 预置数据；可选将图同步到 Neo4j 并打印可视化 Cypher。
 - **流程**：构建图与初始数据 → 基线执行 → 多组 `run_scenario`（交付延迟、缓冲调整、承诺日、多属性）→ 可选连接 Neo4j、`ensure_data_nodes_from_map` + 创建计算节点与关系 + 打印可视化说明。
 
-### 4.5 种子数据脚本
+### 4.5 认证/物料/工序计算图（certifies_demo.py）
+
+- **图结构**：认证完成时间 → 物料到货时间 → 子工序完成时间（op001/op002）→ 工序完成时间（max）；数据节点含 Certifies、MPart、AOProcedures、VehicleBatch 等，计算节点为日期 + timedelta 的 Python 表达式。
+- **数据加载**：优先从 Neo4j 加载：使用 **`get_graph_datanode_uuids()`** 返回的「计算图数据节点 ID → Neo4j 节点/关系 uuid」映射，调用 `load_graph_data_from_neo4j(graph, data_node_id_to_neo4j_uuid=datanode_uuids)` 拉取属性并填充到 `node_data_map`（key 为数据节点 ID）；Neo4j 中节点或关系上的 uuid 需与映射中的值一致（如 `Certifies_uuid_001`）。加载失败时回退到内存 `build_certifies_node_data()`。
+- **流程**：连接 Neo4j（可选）→ 按映射加载或使用内存数据 → 基线执行 → 同步计算图到 Neo4j（可选）→ What-If（认证周期/采购周期等）。
+- **种子脚本**：先运行 `python -m examples.seed_certifies_neo4j` 将数据写入 Neo4j；该脚本根据 **`element_type`** 决定建点还是建边：`element_type=NODE` 的条目建为节点（`MERGE (n:Label {uuid})`），`element_type=EDGE` 的条目建为边（`(start)-[TYPE {uuid}]->(end)`，端点由 `start_id`/`end_id` 匹配），关系类型为 `type`（如 Certifies、Requires），便于后续按 uuid 从节点或边上加载属性。
+
+### 4.6 种子数据脚本
 
 - **simple_computation_seed_neo4j_data.py**：在 Neo4j 中预创建 Order、Invoice（按 uuid）；支持 `--clear` 先按 uuid 删除再建。
 - **supply_chain_seed_neo4j_data.py**：为 supply_chain_delay_demo 预创建 Shipment、ProductionPlan、Product 等业务节点；支持 `--clear` 先按 uuid 删除再建。
+- **seed_certifies_neo4j.py**：为 certifies_demo 写入 Neo4j 数据；按 **element_type** 区分：NODE 建点、EDGE 建边（端点用 start_id/end_id），节点与边上均带 uuid 及属性。
 
 ---
 
@@ -116,9 +124,10 @@
 
 ### 5.4 Neo4j 的角色
 
-- **数据源**：业务节点（任意 label）按 uuid 存储；加载时按图的 `get_data_node_ids()` 取属性，在内存中形成 `node_data_map`。
+- **数据源**：业务节点（任意 label）或关系（边上属性）按 uuid 存储。加载时可按图的 `get_data_node_ids()` 直接当 uuid 查询，也可传入 **data_node_id_to_neo4j_uuid** 映射（如 `get_graph_datanode_uuids()`）：按 Neo4j 中的 uuid 查节点或边，得到属性后以数据节点 ID 为 key 填入 `node_data_map`。
+- **种子数据**：certifies 种子脚本按 **element_type**（NODE/EDGE）决定建点或建边，不按 start_id/end_id 是否存在判断；边上带 uuid 与属性，便于 `get_data_node_by_uuid` 从节点或关系中读取。
 - **可选持久化**：可把 ComputationNode、Relationship 写入 Neo4j；计算得到的输出属性可通过 `write_output_properties` 写回对应节点（按 uuid 匹配）。
-- 当前 What-If 主路径是：**Neo4j 提供数据 → 内存 node_data_map + ComputationGraphExecutor 执行 → 可选写回 Neo4j**。
+- 当前 What-If 主路径是：**Neo4j 提供数据（可选按映射加载）→ 内存 node_data_map + ComputationGraphExecutor 执行 → 可选写回 Neo4j**。
 
 ---
 
@@ -137,6 +146,8 @@
   PYTHONPATH=src python examples/simple_computation_chain.py
   PYTHONPATH=src python examples/supply_chain_delay_demo.py              # 需 Neo4j 已起且有种子数据
   PYTHONPATH=src python examples/supply_chain_rich_demo.py               # 可无 Neo4j，纯内存运行
+  python -m examples.seed_certifies_neo4j                                # 先写入 certifies 数据（需 Neo4j）
+  python -m examples.certifies_demo                                      # 认证/物料/工序计算图 + What-If（可先 seed 再从 Neo4j 加载）
   ```
 
 ---
@@ -148,7 +159,7 @@
 | 图模型 | `src/domain/models/computation_graph.py`、`computation_node.py`、`computation_relationship.py`、`io_spec.py` |
 | 执行 | `src/domain/services/computation_graph_executor.py` |
 | Neo4j 与 What-If | `src/domain/services/neo4j_graph_manager.py`、`what_if_simulator.py` |
-| 示例 | `examples/simple_computation_chain.py`、`examples/supply_chain_delay_demo.py`、`examples/supply_chain_rich_demo.py` |
+| 示例 | `examples/simple_computation_chain.py`、`examples/supply_chain_delay_demo.py`、`examples/supply_chain_rich_demo.py`、`examples/certifies_demo.py`、`examples/seed_certifies_neo4j.py` |
 | 设计/差距说明 | `docs/whatif_图数据库分析_差距与完善.md`、`.cursor/plans/项目运作说明_c434e5bb.plan.md` |
 
 ---
